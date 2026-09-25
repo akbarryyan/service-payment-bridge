@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"net/http"
 	"os"
@@ -59,8 +58,8 @@ func main() {
 	defer mqttClient.Disconnect()
 
 	handler := newGenerateQRHandler(logger, q, deviceResolver, txService, mqttClient)
-	if err := mqttClient.Subscribe("topic/#", handler); err != nil {
-		logger.Error("failed to subscribe to topic/#", "error", err)
+	if err := mqttClient.Subscribe(qrtopic.RequestTopic, handler); err != nil {
+		logger.Error("failed to subscribe to "+qrtopic.RequestTopic, "error", err)
 		os.Exit(1)
 	}
 
@@ -95,20 +94,16 @@ func newGenerateQRHandler(logger *slog.Logger, q *sqlc.Queries, deviceResolver *
 		topicStr := msg.Topic()
 		payload := msg.Payload()
 
-		parsedTopic, err := qrtopic.Parse(topicStr)
-		if err != nil {
-			logger.Warn("dropping message with invalid topic format", "topic", topicStr, "error", err)
-			return
-		}
-
-		qrMsg, err := validation.ParseAndValidateGenerateQR(payload)
+		qrMsg, err := validation.ParseGenerateQRMessage(payload)
 		if err != nil {
 			logger.Warn("invalid GENERATE_QR payload", "topic", topicStr, "error", err)
 			logMQTTMessage(ctx, q, logger, topicStr, payload, sqlc.MqttDirectionINBOUND, sqlc.MqttMessageStatusFAILED, "", err.Error())
 			return
 		}
 
-		device, err := deviceResolver.ResolveDevice(ctx, parsedTopic.DeviceID)
+		replyTopic := qrtopic.BuildDeviceTopic(qrMsg.DeviceID)
+
+		device, err := deviceResolver.ResolveDevice(ctx, qrMsg.DeviceID)
 		if err != nil || !device.DeviceActive || !device.MerchantActive || !device.TenantActive {
 			errMsg := "UNKNOWN_DEVICE"
 			switch {
@@ -119,8 +114,9 @@ func newGenerateQRHandler(logger *slog.Logger, q *sqlc.Queries, deviceResolver *
 			case err == nil && !device.TenantActive:
 				errMsg = "TENANT_INACTIVE"
 			}
-			logger.Warn("device resolve failed", "device_id", parsedTopic.DeviceID, "reason", errMsg)
+			logger.Warn("device resolve failed", "device_id", qrMsg.DeviceID, "reason", errMsg)
 			logMQTTMessage(ctx, q, logger, topicStr, payload, sqlc.MqttDirectionINBOUND, sqlc.MqttMessageStatusFAILED, "", errMsg)
+			publishFailureReply(ctx, q, logger, mqttClient, replyTopic, "")
 			return
 		}
 
@@ -128,45 +124,37 @@ func newGenerateQRHandler(logger *slog.Logger, q *sqlc.Queries, deviceResolver *
 		if err != nil {
 			logger.Error("GenerateQR orchestration error", "device_id", device.DeviceID, "error", err)
 			logMQTTMessage(ctx, q, logger, topicStr, payload, sqlc.MqttDirectionINBOUND, sqlc.MqttMessageStatusFAILED, "", err.Error())
+			publishFailureReply(ctx, q, logger, mqttClient, replyTopic, "")
 			return
 		}
-
 		logMQTTMessage(ctx, q, logger, topicStr, payload, sqlc.MqttDirectionINBOUND, sqlc.MqttMessageStatusPROCESSED, result.TransactionID, "")
 
-		outPayload := buildQRResultPayload(result)
-		outBytes, _ := json.Marshal(outPayload)
-
-		if err := mqttClient.Publish(topicStr, outBytes); err != nil {
-			logger.Error("failed to publish QR_RESULT", "topic", topicStr, "transaction_id", result.TransactionID, "error", err)
-			logMQTTMessage(ctx, q, logger, topicStr, outBytes, sqlc.MqttDirectionOUTBOUND, sqlc.MqttMessageStatusFAILED, result.TransactionID, err.Error())
+		if result.Status != "SUCCESS" {
+			publishFailureReply(ctx, q, logger, mqttClient, replyTopic, result.TransactionID)
 			return
 		}
-		logMQTTMessage(ctx, q, logger, topicStr, outBytes, sqlc.MqttDirectionOUTBOUND, sqlc.MqttMessageStatusPROCESSED, result.TransactionID, "")
+
+		outPayload := []byte("QR:" + result.QRISPayload)
+		if err := mqttClient.Publish(replyTopic, outPayload); err != nil {
+			logger.Error("failed to publish QR reply", "topic", replyTopic, "transaction_id", result.TransactionID, "error", err)
+			logMQTTMessage(ctx, q, logger, replyTopic, outPayload, sqlc.MqttDirectionOUTBOUND, sqlc.MqttMessageStatusFAILED, result.TransactionID, err.Error())
+			return
+		}
+		logMQTTMessage(ctx, q, logger, replyTopic, outPayload, sqlc.MqttDirectionOUTBOUND, sqlc.MqttMessageStatusPROCESSED, result.TransactionID, "")
 	}
 }
 
-type qrResultPayload struct {
-	Type          string `json:"type"`
-	TransactionID string `json:"transaction_id"`
-	Status        string `json:"status"`
-	QRISPayload   string `json:"qris_payload,omitempty"`
-	ExpireAt      string `json:"expire_at,omitempty"`
-	Error         string `json:"error,omitempty"`
-}
-
-func buildQRResultPayload(result *transaction.GenerateQRResult) qrResultPayload {
-	p := qrResultPayload{
-		Type:          "QR_RESULT",
-		TransactionID: result.TransactionID,
-		Status:        result.Status,
+// publishFailureReply sends the firmware's fallback plain-text message
+// (no structured error schema exists on-device — it falls through to TTS
+// via AppPlayTip) and logs the outbound attempt. transactionID may be "".
+func publishFailureReply(ctx context.Context, q *sqlc.Queries, logger *slog.Logger, mqttClient *mqttclient.Client, replyTopic, transactionID string) {
+	const failureMessage = "Gagal membuat QR, coba lagi"
+	if err := mqttClient.Publish(replyTopic, []byte(failureMessage)); err != nil {
+		logger.Error("failed to publish failure reply", "topic", replyTopic, "error", err)
+		logMQTTMessage(ctx, q, logger, replyTopic, []byte(failureMessage), sqlc.MqttDirectionOUTBOUND, sqlc.MqttMessageStatusFAILED, transactionID, err.Error())
+		return
 	}
-	if result.Status == "SUCCESS" {
-		p.QRISPayload = result.QRISPayload
-		p.ExpireAt = result.ExpireAt.Format(time.RFC3339)
-	} else {
-		p.Error = result.ErrorCode
-	}
-	return p
+	logMQTTMessage(ctx, q, logger, replyTopic, []byte(failureMessage), sqlc.MqttDirectionOUTBOUND, sqlc.MqttMessageStatusPROCESSED, transactionID, "")
 }
 
 func logMQTTMessage(ctx context.Context, q *sqlc.Queries, logger *slog.Logger, topic string, payload []byte, direction sqlc.MqttDirection, status sqlc.MqttMessageStatus, transactionID, errMsg string) {
