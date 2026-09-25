@@ -39,9 +39,9 @@ Setiap flow dipecah jadi step bernomor, dengan kolom:
 
 | # | Aktor/Komponen | Aksi | Data Dibaca | Data Ditulis | Validasi/Kondisi | Kalau Gagal |
 |---|---|---|---|---|---|---|
-| 1 | Q161 Pro | Publish MQTT ke `topic/{merchant_id}/{tenant_slot}/{device_id}` miliknya sendiri, payload `{"type":"GENERATE_QR","amount":50000}` | — | — | — | (di luar scope Service) |
-| 2 | MQTT Consumer | Terima pesan, split topic jadi 4 segmen (`topic/{merchant_id}/{tenant_slot}/{device_id}`), ekstrak `device_id` (segmen terakhir) | — | — | Topic harus match pola 4 segmen; `device_id` wajib ada | Pesan diabaikan, tidak dicatat (format topic tidak dikenali sistem) |
-| 3 | Message Parser | Decode payload JSON → objek internal `{merchant_id, amount}` | — | — | JSON valid, field `amount` ada | Reject → lanjut ke step 4b |
+| 1 | Q161 Pro | Publish MQTT ke `qris/request` (topic tetap, shared semua device), payload `"{device_id}\|{amount_sen}"` misal `"MT58530503\|5000000"` | — | — | — | (di luar scope Service) |
+| 2 | MQTT Consumer | Terima pesan dari `qris/request` | — | — | — | — |
+| 3 | Message Parser | Parse payload pipe-delimited → `{device_id, amount_rupiah}` (`amount_sen / 100`) | — | — | Ada tepat satu `\|`; `device_id` tidak kosong; `amount_sen` integer positif | Reject → lanjut ke step 4b |
 | 4a | Message Validator | Validasi: `amount > 0`, format sesuai skema | — | — | Amount integer positif | — |
 | 4b | Message Validator (invalid path) | Catat pesan invalid | — | `mqtt_messages`: INSERT (`direction=INBOUND`, `status=FAILED`, `error_message`, `transaction_id=NULL`) | — | **Flow berhenti di sini** — tidak diteruskan ke Manjo |
 | 5 | Device Resolver | Lookup `devices` berdasarkan `device_id` (dari cache in-memory, fallback ke DB); dari situ ambil `merchants` (kredensial, lewat `device.merchant_id`) dan `tenants` (`manjo_sub_merchant_id`, kalau `device.tenant_id` tidak null) | `devices` (`device_id`, `merchant_id`, `tenant_id`, `status`, `manjo_store_id`, `manjo_terminal_id`); `merchants` (`status`, `manjo_*`); `tenants` (`manjo_sub_merchant_id`, `status`, kalau ada) | — | Device harus ada & `status='ACTIVE'`; merchant terkait harus `status='ACTIVE'`; kalau `tenant_id` ada, tenant terkait juga harus `status='ACTIVE'` | Reject, catat di `mqtt_messages` sebagai `FAILED` dengan `error_message='UNKNOWN_DEVICE'`/`'DEVICE_INACTIVE'`/`'MERCHANT_INACTIVE'`/`'TENANT_INACTIVE'`. **Flow berhenti.** |
@@ -55,8 +55,8 @@ Setiap flow dipecah jadi step bernomor, dengan kolom:
 | 11c | Manjo Client (query fallback pasca-`409`) | `POST /v1.0/qr/qr-mpm-query` | `merchants.manjo_client_secret_ref` (secret untuk signature Query) | `manjo_api_logs`: INSERT (`direction=OUTBOUND`, `operation=QUERY_PAYMENT`, `endpoint`, `request_body` *(signature di-mask)*, `transaction_id`) | Header `X-CLIENT-KEY` + `Authorization` Bearer wajib dua-duanya (beda dari generate QR) | Query gagal/timeout → treat seperti percobaan generate QR gagal, lanjut ke batas retry step 11b |
 | 12a | Transaction Service | Transaksi berhasil punya QR | — | (sudah ter-update di step 11a) | — | — |
 | 12b | Transaction Service | Semua percobaan gagal | — | `transactions`: UPDATE `status='FAILED'` | — | — |
-| 13a | MQTT Publisher | Build payload `QR_RESULT` (`status=SUCCESS`, `qris_payload`, `expire_at`), lookup `devices.mqtt_topic` via `transactions.device_id`, publish ke topic tsb | `transactions` (data yang baru di-update), `devices.mqtt_topic` | `mqtt_messages`: INSERT (`direction=OUTBOUND`, `status=PROCESSED`, `transaction_id`) | — | Kalau publish gagal → masuk retry queue (tidak mengubah status transaksi) |
-| 13b | MQTT Publisher (kasus gagal) | Build payload `QR_RESULT` (`status=FAILED`, `error`), lookup `devices.mqtt_topic` via `transactions.device_id`, publish ke topic tsb | `devices.mqtt_topic` | `mqtt_messages`: INSERT (`direction=OUTBOUND`, `transaction_id`) | — | — |
+| 13a | MQTT Publisher | Build payload `"QR:{qris_payload}"`, publish ke `"topic_" + device_id` | `transactions` (data yang baru di-update) | `mqtt_messages`: INSERT (`direction=OUTBOUND`, `status=PROCESSED`, `transaction_id`) | — | Kalau publish gagal → catat `FAILED` di `mqtt_messages` (tidak mengubah status transaksi) |
+| 13b | MQTT Publisher (kasus gagal) | Build pesan plain text manusiawi (mis. `"Gagal membuat QR, coba lagi"`), publish ke `"topic_" + device_id` | — | `mqtt_messages`: INSERT (`direction=OUTBOUND`, `transaction_id`) | — | — |
 | 14 | Q161 Pro | Terima `qris_payload`, render jadi gambar QR, tampilkan | — | — | — | (di luar scope Service) |
 
 ---

@@ -141,9 +141,9 @@ Dua fungsi inti sistem:
 
 ### 4.1 MQTT Consumer
 
-- Subscribe ke wildcard topic (contoh: `topic_+` atau `topic_#` tergantung broker) supaya tidak perlu re-subscribe tiap ada merchant baru.
-- Ekstrak `merchant_id` dari nama topic.
-- Teruskan raw payload + `merchant_id` ke Message Parser.
+- Subscribe sekali ke topic tetap `qris/request` — **shared** oleh semua device, bukan wildcard per-merchant (firmware publish semua request ke topic yang sama; lihat `docs/eclipse/src/mqtt.c:236`, `inc/def.h:36`).
+- `device_id` datang dari payload (lihat Section 7.1), bukan dari nama topic.
+- Teruskan raw payload ke Message Parser.
 - **Tidak** melakukan validasi bisnis — murni transport layer.
 
 ### 4.2 Message Parser
@@ -158,8 +158,8 @@ Dua fungsi inti sistem:
 
 ### 4.4 Device Resolver
 
-- Mapping topic MQTT (`topic/{merchant_id}/{tenant_slot}/{device_id}`) → konfigurasi lengkap: kredensial Manjo (dari `merchants`, lewat `device.merchant_id`), `manjo_sub_merchant_id` (dari `tenants`, kalau `device.tenant_id` tidak null), `manjo_store_id`/`manjo_terminal_id` (dari `devices`).
-- **Kunci lookup utama adalah `device_id`** (unik global) — bukan kombinasi merchant_id+tenant_id+device_id. Segmen `merchant_id`/`tenant_slot` di topic terutama untuk keperluan debugging/filtering manual, bukan bagian dari logic lookup.
+- Mapping `device_id` (diambil dari payload request, Section 7.1) → konfigurasi lengkap: kredensial Manjo (dari `merchants`, lewat `device.merchant_id`), `manjo_sub_merchant_id` (dari `tenants`, kalau `device.tenant_id` tidak null), `manjo_store_id`/`manjo_terminal_id` (dari `devices`).
+- **Kunci lookup adalah `device_id`** (unik global, sekarang satu-satunya sumbernya — topic inbound tidak lagi mengandung device_id karena sekarang shared di semua device).
 - Sumber data: tabel `merchants`, `tenants`, `devices` ([Section 9](#9-data-model)), di-cache in-memory dengan key `device_id`, TTL pendek atau invalidasi manual saat config berubah.
 - Kalau `device_id` tidak ditemukan di `devices` → reject, jangan diteruskan ke Manjo Client (device belum ter-provisioning).
 
@@ -183,7 +183,7 @@ Lihat detail lengkap di `brainstorm-q161-updated.md` Section 13. Ringkasan sub-k
 ### 4.7 MQTT Publisher
 
 - Terima payload internal dari Transaction Service (hasil generate QR atau hasil update payment).
-- Serialize ke format final ([Section 7](#7-kontrak-internal-q161--service)) dan publish ke `devices.mqtt_topic` milik `transactions.device_id` terkait (**bukan** hasil parsing ulang dari topic request masuk — selalu lookup DB, supaya konsisten walau ada perubahan config device di tengah siklus transaksi).
+- Serialize ke format final ([Section 7](#7-kontrak-internal-q161--service)) dan publish ke `"topic_" + device_id` (`internal/qrtopic.BuildDeviceTopic`), dihitung langsung dari `device_id` — **bukan** hasil parsing topic request masuk (topic inbound sekarang shared, tidak per-device lagi).
 - Kalau publish gagal (broker down), masuk ke retry queue terpisah — **tidak boleh memblokir** response HTTP ke Manjo di jalur notification.
 
 ### 4.8 Notification HTTP Endpoint
@@ -293,48 +293,32 @@ Customer        Manjo           Payment Bridge        MQTT Broker      Q161 Pro 
 
 > Kontrak ini murni keputusan internal (kamu kontrol kedua ujungnya). Skema di bawah adalah **baseline yang direkomendasikan**, silakan sesuaikan dengan firmware yang sudah berjalan di Q181 supaya bisa reuse sebanyak mungkin.
 
+> **Kontrak berikut adalah kontrak nyata firmware** (ground truth dari `docs/eclipse/src/mqtt.c`, `inc/def.h`), bukan baseline yang bisa disesuaikan — lihat `docs/superpowers/specs/2026-09-25-mqtt-contract-reconciliation-design.md` untuk detail rekonsiliasinya.
+
 ### 7.1 Q161 → Service (Request Generate QR)
 
-**Topic:** `topic/{merchant_id}/{tenant_slot}/{device_id}` — `tenant_slot` = `tenant_id` asli, atau literal `_` kalau device tanpa tenant
+**Topic:** `qris/request` — tetap, shared oleh semua device (bukan per-device)
 
-```json
-{
-  "type": "GENERATE_QR",
-  "amount": 50000
-}
-```
+**Payload:** plain text, pipe-delimited: `"{device_id}|{amount_sen}"`
 
-| Field | Wajib | Keterangan |
+Contoh: `"MT58530503|5000000"` (device `MT58530503`, Rp50.000 = 5.000.000 sen)
+
+| Bagian | Wajib | Keterangan |
 |---|---|---|
-| `type` | Ya | Pembeda jenis pesan, untuk future-proof kalau nanti ada jenis pesan lain di topic yang sama |
-| `amount` | Ya | Integer Rupiah (bukan string, bukan desimal) |
+| `device_id` | Ya | String sebelum `\|` — identitas device, dipakai Device Resolver |
+| `amount_sen` | Ya | Integer, Rupiah × 100 (firmware kirim dalam sen) |
 
-`transaction_id` **tidak dikirim device** — direkomendasikan digenerate Service saat menerima pesan ini, format: `TRX-{yyyyMMdd}-{sequence}`, supaya penomoran konsisten dan uniqueness terjamin di satu tempat.
+`transaction_id` **tidak dikirim device** — digenerate Service saat menerima pesan ini, format: `TRX-{yyyyMMdd}-{sequence}`.
 
 ### 7.2 Service → Q161 (Hasil Generate QR)
 
-**Topic:** `topic/{merchant_id}/{tenant_slot}/{device_id}` — `tenant_slot` = `tenant_id` asli, atau literal `_` kalau device tanpa tenant
+**Topic:** `"topic_" + device_id` (dihitung dari `device_id`, bukan lookup `devices.mqtt_topic`)
 
-```json
-{
-  "type": "QR_RESULT",
-  "transaction_id": "TRX-20260924-000001",
-  "status": "SUCCESS",
-  "qris_payload": "00020101021226620015ID.CO.MANJO.WWW...",
-  "expire_at": "2026-09-24T21:30:00+07:00"
-}
-```
+**Payload:** plain text — firmware tidak punya skema JSON untuk balasan, hanya mengenali prefix `QR:` untuk sukses; apa pun selain itu jatuh ke TTS generik (`AppPlayTip`).
 
-Kalau gagal:
+Sukses: `"QR:{qris_payload}"` — contoh: `"QR:00020101021226620015ID.CO.MANJO.WWW..."`
 
-```json
-{
-  "type": "QR_RESULT",
-  "transaction_id": "TRX-20260924-000001",
-  "status": "FAILED",
-  "error": "MANJO_TIMEOUT"
-}
-```
+Gagal: kalimat manusiawi berbahasa Indonesia, contoh: `"Gagal membuat QR, coba lagi"` (kode error asli tetap dicatat di `mqtt_messages`/`manjo_api_logs` untuk debugging internal, tidak dikirim ke device).
 
 ### 7.3 Service → Q161 (Payment Notification)
 

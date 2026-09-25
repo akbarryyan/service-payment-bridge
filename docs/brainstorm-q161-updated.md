@@ -121,6 +121,8 @@ Service harus dapat menangani dua fase utama:
 
 Setiap soundbox memiliki topic berdasarkan `merchant_id`.
 
+> **Update pasca-rekonsiliasi kontrak (2026-09-25):** `MQTT_MERCHANT_ID` yang di-compile ke firmware diperlakukan sebagai `device_id` di backend (satu binary firmware = satu device fisik). Topic outbound di bawah ini tetap `topic_{device_id}` persis seperti yang sudah didokumentasikan di sini — bagian ini sudah akurat. Yang berubah adalah topic **inbound** (request dari device ke Service): sekarang topic tetap `qris/request`, shared semua device, bukan per-merchant — lihat `docs/superpowers/specs/2026-09-25-mqtt-contract-reconciliation-design.md`.
+
 **Format:**
 
 ```text
