@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,8 +28,9 @@ import (
 
 // TestGenerateQRFlow_EndToEnd wires the same components as cmd/server/main.go
 // (minus HTTP server) against real Postgres + Mosquitto (docker-compose,
-// Fase 1) and a mock Manjo (httptest), publishing a real MQTT message and
-// asserting a real QR_RESULT comes back on the same topic.
+// Fase 1) and a mock Manjo (httptest), publishing a real MQTT message on
+// the firmware's actual request topic/format and asserting a real "QR:"
+// reply comes back on the device's own topic.
 func TestGenerateQRFlow_EndToEnd(t *testing.T) {
 	manjoServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -57,7 +59,7 @@ func TestGenerateQRFlow_EndToEnd(t *testing.T) {
 
 	merchantID := "E2E-TEST-MERCHANT"
 	deviceID := "E2E-TEST-DEVICE"
-	topic := qrtopic.Build(merchantID, "", deviceID)
+	replyTopic := qrtopic.BuildDeviceTopic(deviceID)
 
 	t.Setenv("E2E_PRIVATE_KEY_REF", mustGenerateTestKeyBase64(t))
 	t.Setenv("E2E_SECRET_REF", "e2e-test-secret")
@@ -72,12 +74,12 @@ func TestGenerateQRFlow_EndToEnd(t *testing.T) {
 	_, err = pool.Exec(ctx, `
 		INSERT INTO devices (device_id, merchant_id, mqtt_topic)
 		VALUES ($1, $2, $3)
-		ON CONFLICT (device_id) DO NOTHING`, deviceID, merchantID, topic)
+		ON CONFLICT (device_id) DO NOTHING`, deviceID, merchantID, replyTopic)
 	if err != nil {
 		t.Fatalf("failed to seed device: %v", err)
 	}
 	t.Cleanup(func() {
-		pool.Exec(context.Background(), `DELETE FROM mqtt_messages WHERE topic = $1`, topic)
+		pool.Exec(context.Background(), `DELETE FROM mqtt_messages WHERE topic IN ($1, $2)`, qrtopic.RequestTopic, replyTopic)
 		pool.Exec(context.Background(), `DELETE FROM manjo_api_logs WHERE transaction_id IN (SELECT transaction_id FROM transactions WHERE merchant_id = $1)`, merchantID)
 		pool.Exec(context.Background(), `DELETE FROM transactions WHERE merchant_id = $1`, merchantID)
 		pool.Exec(context.Background(), `DELETE FROM devices WHERE device_id = $1`, deviceID)
@@ -94,51 +96,50 @@ func TestGenerateQRFlow_EndToEnd(t *testing.T) {
 	}
 	defer mqttClient.Disconnect()
 
-	handlerDone := make(chan struct{}, 1)
-	err = mqttClient.Subscribe(topic, func(_ mqtt.Client, msg mqtt.Message) {
-		var payload struct {
-			Type   string `json:"type"`
-			Amount int64  `json:"amount"`
-		}
-		if json.Unmarshal(msg.Payload(), &payload) == nil && payload.Type == "GENERATE_QR" {
-			// simulate the consumer handler inline (same logic as main.go)
-			qrMsg, err := validation.ParseAndValidateGenerateQR(msg.Payload())
-			if err != nil {
-				return
-			}
-			device, err := deviceResolver.ResolveDevice(ctx, deviceID)
-			if err != nil {
-				return
-			}
-			result, err := txService.GenerateQR(ctx, *device, qrMsg.Amount)
-			if err != nil {
-				return
-			}
-			out, _ := json.Marshal(map[string]interface{}{
-				"type": "QR_RESULT", "transaction_id": result.TransactionID,
-				"status": result.Status, "qris_payload": result.QRISPayload,
-			})
-			mqttClient.Publish(topic, out)
-			return
-		}
-
-		// this is the QR_RESULT reply
-		handlerDone <- struct{}{}
+	handlerDone := make(chan string, 1)
+	err = mqttClient.Subscribe(replyTopic, func(_ mqtt.Client, msg mqtt.Message) {
+		handlerDone <- string(msg.Payload())
 	})
 	if err != nil {
-		t.Fatalf("Subscribe() error = %v", err)
+		t.Fatalf("Subscribe(%q) error = %v", replyTopic, err)
 	}
 
-	reqPayload, _ := json.Marshal(map[string]interface{}{"type": "GENERATE_QR", "amount": 50000})
-	if err := mqttClient.Publish(topic, reqPayload); err != nil {
+	err = mqttClient.Subscribe(qrtopic.RequestTopic, func(_ mqtt.Client, msg mqtt.Message) {
+		// simulate the consumer handler inline (same logic as cmd/server/main.go)
+		qrMsg, err := validation.ParseGenerateQRMessage(msg.Payload())
+		if err != nil {
+			return
+		}
+		device, err := deviceResolver.ResolveDevice(ctx, qrMsg.DeviceID)
+		if err != nil {
+			return
+		}
+		result, err := txService.GenerateQR(ctx, *device, qrMsg.Amount)
+		if err != nil || result.Status != "SUCCESS" {
+			return
+		}
+		mqttClient.Publish(qrtopic.BuildDeviceTopic(device.DeviceID), []byte("QR:"+result.QRISPayload))
+	})
+	if err != nil {
+		t.Fatalf("Subscribe(%q) error = %v", qrtopic.RequestTopic, err)
+	}
+
+	// Firmware payload: "{device_id}|{amount_sen}" — 50000 Rupiah = 5000000 sen.
+	reqPayload := []byte(deviceID + "|5000000")
+	if err := mqttClient.Publish(qrtopic.RequestTopic, reqPayload); err != nil {
 		t.Fatalf("Publish() error = %v", err)
 	}
 
+	var reply string
 	select {
-	case <-handlerDone:
+	case reply = <-handlerDone:
 		// success
 	case <-time.After(10 * time.Second):
-		t.Fatal("timed out waiting for QR_RESULT reply")
+		t.Fatal("timed out waiting for QR reply")
+	}
+
+	if !strings.HasPrefix(reply, "QR:") {
+		t.Errorf("reply = %q, want prefix %q", reply, "QR:")
 	}
 
 	rows, err := pool.Query(ctx, `SELECT status FROM transactions WHERE merchant_id = $1`, merchantID)
