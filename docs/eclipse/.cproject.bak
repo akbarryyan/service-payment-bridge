@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<?fileVersion 4.0.0?><cproject storage_type_id="org.eclipse.cdt.core.XmlProjectDescriptionStorage">
+	<storageModule moduleId="org.eclipse.cdt.core.settings">
+		<cconfiguration id="com.vanstone.cdt.configuration.Q161Pro.100000001">
+			<storageModule buildSystemId="org.eclipse.cdt.managedbuilder.core.configurationDataProvider" id="com.vanstone.cdt.configuration.Q161Pro.100000001" moduleId="org.eclipse.cdt.core.settings" name="Release">
+				<externalSettings/>
+				<extensions>
+					<extension id="org.eclipse.cdt.core.GASErrorParser" point="org.eclipse.cdt.core.ErrorParser"/>
+					<extension id="org.eclipse.cdt.core.GLDErrorParser" point="org.eclipse.cdt.core.ErrorParser"/>
+					<extension id="org.eclipse.cdt.core.MakeErrorParser" point="org.eclipse.cdt.core.ErrorParser"/>
+					<extension id="org.eclipse.cdt.core.VCErrorParser" point="org.eclipse.cdt.core.ErrorParser"/>
+					<extension id="org.eclipse.cdt.core.GCCErrorParser" point="org.eclipse.cdt.core.ErrorParser"/>
+				</extensions>
+			</storageModule>
+			<storageModule moduleId="cdtBuildSystem" version="4.0.0">
+				<configuration artifactExtension="img" artifactName="${ProjName}" buildArtefactType="com.vanstone.cdt.buildArtefactType.pos" buildProperties="org.eclipse.cdt.build.core.buildArtefactType=com.vanstone.cdt.buildArtefactType.pos" cleanCommand="${VANSTONE_TOOLS_PATH}\build\make381\rm -f" description="" errorParsers="org.eclipse.cdt.core.MakeErrorParser;org.eclipse.cdt.core.GCCErrorParser;org.eclipse.cdt.core.GLDErrorParser;org.eclipse.cdt.core.GASErrorParser;org.eclipse.cdt.core.VCErrorParser" id="com.vanstone.cdt.configuration.Q161Pro.100000001" name="Release" parent="com.vanstone.cdt.configuration.Q161Pro" postbuildStep="${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\pack ${ProjName} ${VANSTONE_TOOLS_PATH} &amp; ${VANSTONE_TOOLS_PATH}/NOV30/vpostype/Q161Pro/VanstoneSign ${ProjName}.img">
+					<folderInfo id="com.vanstone.cdt.configuration.Q161Pro.100000001." name="/" resourcePath="">
+						<toolChain id="com.vanstone.cdt.toolchain.Q161Pro.100000002" name="gcc-arm-none-eabi for Q161Pro" superClass="com.vanstone.cdt.toolchain.Q161Pro">
+							<option id="com.vanstone.cdt.Q161Pro.option.general.toolpath.100000003" name="Vanstone Tools Path" superClass="com.vanstone.cdt.Q161Pro.option.general.toolpath"/>
+							<option id="com.vanstone.cdt.Q161Pro.option.general.crosspath.100000004" name="Q161Pro Crosstool Path" superClass="com.vanstone.cdt.Q161Pro.option.general.crosspath"/>
+							<targetPlatform id="com.vanstone.cdt.target.Q161Pro.100000005" isAbstract="false" name="Q161Pro" osList="other" superClass="com.vanstone.cdt.target.Q161Pro"/>
+							<builder buildPath="${workspace_loc:/Q161ProSoundbox}/Release" id="com.vanstone.cdt.builder.Q161Pro.100000006" keepEnvironmentInBuildfile="false" managedBuildOn="true" name="make" superClass="com.vanstone.cdt.builder.Q161Pro"/>
+							<tool id="com.vanstone.cdt.compiler.Q161Pro.100000007" name="Q161Pro Compiler" superClass="com.vanstone.cdt.compiler.Q161Pro">
+								<option IS_BUILTIN_EMPTY="false" IS_VALUE_EMPTY="false" id="com.vanstone.cdt.Q161Pro.option.compiler.includepath.100000008" superClass="com.vanstone.cdt.Q161Pro.option.compiler.includepath" valueType="includePath">
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\include&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${Q161Pro_CROSS_PATH}\arm-none-eabi\include&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${Q161Pro_CROSS_PATH}\lib\gcc\arm-none-eabi\7.2.1\include&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\include&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\inits&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;..\inc&quot;"/>
+									<listOptionValue builtIn="false" value="C:\Users\Hi\eclipse-workspace\Q161ProSoundbox\inc"/>
+								</option>
+								<inputType id="com.vanstone.cdt.input.Q161Pro.c.100000009" name="C Source" superClass="com.vanstone.cdt.input.Q161Pro.c"/>
+							</tool>
+							<tool id="com.vanstone.cdt.linker.Q161Pro.100000010" name="Q161Pro Linker" superClass="com.vanstone.cdt.linker.Q161Pro">
+								<option id="com.vanstone.cdt.Q161Pro.option.linker.userlibs.100000011" name="Libraries" superClass="com.vanstone.cdt.Q161Pro.option.linker.userlibs" valueType="libFiles">
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\inits\core_stub.o&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;--start-group&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\lib\Q161Pro_master_L610_LIB_Hw0.1_Hw1.1_V1.02.51_Release_20260424_d0809101.a&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\lib\libQ161Pro_L610_ApiCore_20260414163902.a&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\lib\libQ161Pro_L610_MQTTClient.a&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\lib\libQ161Pro_L610_ImageCore.a&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\lib\libQ161Pro_L610_QREncode.a&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\lib\libQ161Pro_L610_VSTCrypto.a&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\lib\libQ161Pro_VTMS.a&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\lib\libQ161_L610_HMAC_SHAXXX.a&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\lib\libmbedtls.a&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\lib\lib_emv.a&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\lib\lib_commonUniversal.a&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\lib\lib_paypass.a&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\lib\lib_paywave.a&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\lib\lib_quics.a&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\lib\lib_rupay.a&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\lib\lib_amex.a&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\lib\lib_jcb.a&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\lib\lib_mccs.a&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\lib\lib_vccs.a&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\lib\lib_dpas.a&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\lib\lib_mir.a&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\lib\lib_nsicc.a&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\lib\lib_pure.a&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\lib\lib_FT.a&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${VANSTONE_TOOLS_PATH}\NOV30\vpostype\Q161Pro\lib\lib_NFT.a&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;--end-group&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${Q161Pro_CROSS_PATH}\arm-none-eabi\lib\thumb\v7-ar\fpv3\hard\libc.a&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${Q161Pro_CROSS_PATH}\arm-none-eabi\lib\thumb\v7-ar\fpv3\hard\libm.a&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${Q161Pro_CROSS_PATH}\lib\gcc\arm-none-eabi\7.2.1\thumb\v7-ar\fpv3\hard\libgcc.a&quot;"/>
+								</option>
+								<inputType id="com.vanstone.cdt.input.Q161Pro.o.100000012" name="OBJ Input" superClass="com.vanstone.cdt.input.Q161Pro.o"/>
+							</tool>
+							<tool id="com.vanstone.cdt.packer.Q161Pro.100000013" name="Q161Pro Binary Packer" superClass="com.vanstone.cdt.packer.Q161Pro"/>
+						</toolChain>
+					</folderInfo>
+					<sourceEntries>
+						<entry flags="VALUE_WORKSPACE_PATH|RESOLVED" kind="sourcePath" name="inc"/>
+						<entry flags="VALUE_WORKSPACE_PATH|RESOLVED" kind="sourcePath" name="src"/>
+					</sourceEntries>
+				</configuration>
+			</storageModule>
+			<storageModule moduleId="org.eclipse.cdt.core.externalSettings"/>
+		</cconfiguration>
+	</storageModule>
+	<storageModule moduleId="cdtBuildSystem" version="4.0.0">
+		<project id="Q161ProSoundbox.com.vanstone.cdt.project.Q161Pro.100000014" name="Vanstone Traditional POS" projectType="com.vanstone.cdt.project.Q161Pro"/>
+	</storageModule>
+	<storageModule moduleId="scannerConfiguration">
+		<autodiscovery enabled="true" problemReportingEnabled="true" selectedProfileId=""/>
+	</storageModule>
+	<storageModule moduleId="org.eclipse.cdt.core.LanguageSettingsProviders"/>
+</cproject>

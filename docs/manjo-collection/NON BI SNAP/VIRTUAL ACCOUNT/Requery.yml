@@ -1,0 +1,84 @@
+info:
+  name: Requery
+  type: http
+  seq: 10
+
+http:
+  method: POST
+  url: https://mmsapi-test.manjo.co.id/API/paymentStatusInquiry
+  body:
+    type: json
+    data: "{\r
+
+      \  \"PaymentId\" : \"{{PaymentIdVA}}\",\r
+
+      \  \"MerchantCode\" : \"{{merchantId}}\",\r
+
+      \  \"Currency\" : \"IDR\",\r
+
+      \  \"TransId\": \"{{TransIdVA}}\",\r
+
+      \  \"RefNo\" : \"{{RefNoDirectVa}}\",\r
+
+      \  \"Signature\" : \"{{Signature}}\"\r
+
+      }"
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: before-request
+      code: |-
+        const CryptoJS = require("crypto-js");
+        // const merchantId = pm.collectionVariables.get("merchantId");
+        const merchantId = bru.getEnvVar("merchantId");
+        console.log("merchantId.. "+merchantId);
+
+        // Get vkey and request data
+        var vkey = bru.getCollectionVar("vkey");
+        console.log("vkey.. "+vkey);
+        //get VA ref number
+        var ReferenceNoVA = bru.getCollectionVar("RefNo");
+        console.log("ReferenceNo.. "+ReferenceNoVA);
+
+        var paymentIdVa = bru.getCollectionVar("PaymentIdVA");
+        console.log("PaymentId.. " + paymentIdVa);
+
+        var transIdVA = bru.getCollectionVar("TransIdVA");
+        console.log("TransId.. " + transIdVA);
+
+        var data = JSON.parse(req.getBody());
+
+        // Extract values from the request body
+        var MerchantID = merchantId;
+        var Currency = data.Currency;
+        var PaymentId = paymentIdVa;
+        var ReferenceNo = ReferenceNoVA;
+        var TransId = transIdVA;
+
+        // Concatenate the string in the same order as in Java
+        var str = vkey + MerchantID + PaymentId + ReferenceNo + TransId + Currency;
+        console.log("String before hashing:", str);
+
+        // Generate SHA-256 hash (not HMAC, not SHA1)
+        var sha256Hash = CryptoJS.SHA256(str);
+
+        // Convert the result to HEX to match Java output
+        var signature = sha256Hash.toString(CryptoJS.enc.Hex);
+
+        console.log("Generated Signature:", signature);
+
+        // Save the signature to Postman global variables
+        bru.setGlobalEnvVar('Signature', signature);
+    - type: after-response
+      code: |-
+        // Generate partnerReferenceNo
+        let RefNoDirectVa = bru.getGlobalEnvVar("RefNoDirectVa");
+        // Debug log
+        console.log("RefNoDirectVa:", RefNoDirectVa);
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

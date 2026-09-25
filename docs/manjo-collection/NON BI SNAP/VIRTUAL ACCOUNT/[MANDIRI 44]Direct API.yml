@@ -1,0 +1,118 @@
+info:
+  name: "[MANDIRI 44]Direct API"
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: https://mmsapi-test.manjo.co.id/merchant-switching/services/directPayment
+  body:
+    type: json
+    data: "{\r
+
+      \    \"MerchantCode\": \"{{merchantId}}\",\r
+
+      \    \"PaymentId\": \"44\",\r
+
+      \    \"RefNo\": \"{{RefNo}}\",\r
+
+      \    \"Amount\": \"5000000\",\r
+
+      \    \"Currency\": \"IDR\",\r
+
+      \    \"ProdDesc\": \"Tes Barang\",\r
+
+      \    \"UserName\": \"tes\",\r
+
+      \    \"UserEmail\": \"tes@email.com\",\r
+
+      \    \"UserContact\": \"087787876321\",\r
+
+      \    \"Remark\": \"test\",\r
+
+      \    \"Lang\": \"UTF-8\",\r
+
+      \    \"Signature\": \"{{Signature}}\",\r
+
+      \    \"CallBackURL\": \"https://webhook.site/096cc66c-1dae-4a70-b1ce-ccd43c7eedd9\"\r
+
+      }\r\n"
+  auth:
+    type: basic
+    username: appserver
+    password: adidatam0b1l3
+
+runtime:
+  scripts:
+    - type: before-request
+      code: |-
+        const merchantId = bru.getCollectionVar("merchantId");
+        console.log("merchantId.. " + merchantId);
+
+        // Get vkey
+        const vkey = bru.getCollectionVar("vkey");
+        console.log("vkey.. " + vkey);
+
+        // 1. SAFELY PARSE REQUEST DATA FOR BRUNO
+        let data = {};
+        const body = req.getBody();
+        if (body) {
+          // If Bruno already parsed it, use it directly. If it's a string, parse it.
+          data = typeof body === 'string' ? JSON.parse(body) : body;
+        }
+
+        // Generate a random ReferenceNo
+        const ReferenceNo = "DIRECT-API-NMS-" + [...Array(10)].map(() => Math.random().toString(36)[2]).join('');
+
+        // 2. USE NATIVE BRUNO SYNTAX INSTEAD OF POSTMAN (pm.*)
+        bru.setVar('RefNo', ReferenceNo); // Sets it for the current runtime/environment
+
+        // Extract values from the request body safely
+        // (Ensure data.Amount and data.Currency actually exist in your JSON body)
+        const TxnAmount = data.Amount || "";
+        const MerchantID = bru.getEnvVar("merchantId"); 
+        const Currency = data.Currency || "";
+
+        // Concatenate the string in the same order as in Java
+        const str = vkey + MerchantID + ReferenceNo + TxnAmount + Currency;
+        console.log("String before hashing:", str);
+
+        // Generate SHA-256 hash (not HMAC, not SHA1)
+        const crypto = require("crypto-js");
+        const sha256Hash = crypto.SHA256(str);
+
+        // Convert the result to HEX to match Java output
+        const signature = sha256Hash.toString(crypto.enc.Hex);
+        console.log("Generated Signature:", signature);
+
+        // Save the signature to Bruno global variables
+        bru.setGlobalEnvVar('Signature', signature);
+    - type: after-response
+      code: |-
+        try {
+            // Get the response body
+            const body = res.getBody();
+
+            if (body) {
+                // Bruno usually auto-parses JSON. If it's still a string, parse it safely.
+                const jsonData = typeof body === 'string' ? JSON.parse(body) : body;
+
+                if (jsonData && jsonData.RefNo) {
+                    bru.setGlobalEnvVar("RefNoDirectVa", jsonData.RefNo);
+                    console.log("✅ RefNoDirectVa saved:", jsonData.RefNo);
+                } else {
+                    console.warn("⚠️ RefNo not found in response:", jsonData);
+                }
+            } else {
+                console.warn("⚠️ No or empty response body to read.");
+            }
+
+        } catch (err) {
+            console.error("❌ Failed to process response:", err.message);
+        }
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

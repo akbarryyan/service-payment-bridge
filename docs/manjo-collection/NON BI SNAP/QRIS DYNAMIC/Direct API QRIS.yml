@@ -1,0 +1,121 @@
+info:
+  name: Direct API QRIS
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: "{{manjo-switching-local}}/merchant-switching/services/directPayment"
+  body:
+    type: json
+    data: "{\r
+
+      \    \"MerchantCode\": \"{{merchantId}}\",\r
+
+      \    \"PaymentId\": \"99\",\r
+
+      \    \"RefNo\": \"{{RefNoDirQ}}\",\r
+
+      \    \"Amount\": \"1300000\",\r
+
+      \    \"Currency\": \"IDR\",\r
+
+      \    \"ProdDesc\": \"Tes Barang\",\r
+
+      \    \"UserName\": \"tes\",\r
+
+      \    \"UserEmail\": \"test@gmail.com\",\r
+
+      \    \"UserContact\": \"08123456789\",\r
+
+      \    \"Remark\": \"test\",\r
+
+      \    \"Lang\": \"UTF-8\",\r
+
+      \    \"Signature\": \"{{Signature}}\",\r
+
+      \    \"Dynamic\": \"n\",\r
+
+      \    \"CallBackURL\": \"https://webhook.site/470deff1-4b70-4559-95a7-33f22ade7225\"\r
+
+      }"
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: before-request
+      code: |-
+        const CryptoJS = require("crypto-js");
+
+        // Get variables from Bruno environment
+        const merchantId = bru.getEnvVar("merchantId");
+        console.log("merchantId: " + merchantId);
+
+        const vkey = bru.getEnvVar("vkey");
+        console.log("vkey: " + vkey);
+
+        // In Bruno, req.getBody() automatically parses the JSON if the request type is JSON
+        const data = req.getBody();
+
+        // Generate a random ReferenceNo
+        const ReferenceNo = "DIRECT-API-NMS-" + [...Array(10)].map(() => Math.random().toString(36)[2]).join('');
+
+        // Set RefNoDirQ as a runtime variable (usable via {{RefNoDirQ}} in the request)
+        bru.setVar('RefNoDirQ', ReferenceNo);
+
+        // Extract values from the request body
+        const TxnAmount = data.Amount;
+        const MerchantID = merchantId;
+        const Currency = data.Currency;
+
+        // Concatenate the string in the exact same order
+        const str = vkey + MerchantID + ReferenceNo + TxnAmount + Currency;
+        console.log("String before hashing: " + str);
+
+        // Generate SHA-256 hash (not HMAC, not SHA1)
+        const sha256Hash = CryptoJS.SHA256(str);
+
+        // Convert the result to HEX to match Java output
+        const signature = sha256Hash.toString(CryptoJS.enc.Hex);
+        console.log("Generated Signature: " + signature);
+
+        // Save the signature as a runtime variable (usable via {{Signature}})
+        bru.setVar('Signature', signature);
+    - type: after-response
+      code: |-
+        const body = res.getBody();
+
+        if (body) {
+            try {
+                let jsonData = res.getBody();
+
+                if (jsonData) {
+                    if (jsonData.RefNo) {
+                        bru.setGlobalEnvVar("RefNo", jsonData.RefNo);
+                        console.log("✅ RefNo saved:", jsonData.RefNo);
+                    } else {
+                        console.warn("⚠️ RefNo not found in response:", jsonData);
+                    }
+
+                    if (jsonData.TransId) {
+                        bru.setGlobalEnvVar("TransId", jsonData.TransId);
+                        console.log("✅ TransId saved:", jsonData.TransId);
+                    } else {
+                        console.warn("⚠️ TransId not found in response:", jsonData);
+                    }
+                } else {
+                    console.warn("⚠️ Empty JSON response.");
+                }
+
+            } catch (err) {
+                console.error("❌ Failed to parse JSON response:", err);
+            }
+        } else {
+            console.warn("⚠️ No response body to read.");
+        }
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

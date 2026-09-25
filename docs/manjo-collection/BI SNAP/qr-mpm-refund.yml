@@ -1,0 +1,221 @@
+info:
+  name: qr-mpm-refund
+  type: http
+  seq: 4
+
+http:
+  method: POST
+  url: https://snapqris.manjo.co.id/api/v1.0/qr/qr-mpm-refund
+  headers:
+    - name: X-SIGNATURE
+      value: "{{signatureTransaction}}"
+    - name: X-TIMESTAMP
+      value: "{{X-TIMESTAMP}}"
+    - name: Authorization
+      value: Bearer {{token}}
+    - name: ORIGIN
+      value: www.hostname.com
+    - name: X-PARTNER-ID
+      value: "{{mcCodePayId}}"
+    - name: X-EXTERNAL-ID
+      value: "{{X-EXTERNAL-IDRF}}"
+    - name: X-IP-ADDRESS
+      value: 172.24.281.24
+    - name: X-DEVICE-ID
+      value: 09864ADCASA
+    - name: X-LATITUDE
+      value: "-6.108841"
+      disabled: true
+    - name: X-LONGITUDE
+      value: "106.7782137"
+      disabled: true
+    - name: CHANNEL-ID
+      value: "05"
+  body:
+    type: json
+    data: "{\r
+
+      \   \"merchantId\":\"{{merchantId}}\",\r
+
+      \   \"externalStoreId\":\"A0000001086\",\r
+
+      \   \"originalPartnerReferenceNo\":\"{{originalPartnerReferenceNo}}\",\r
+
+      \   \"originalReferenceNo\":\"{{originalReferenceNo}}\",\r
+
+      \   \"originalExternalId\":\"10052019\",\r
+
+      \   \"partnerRefundNo\":\"{{partnerRefundNo}}\",\r
+
+      \   \"refundAmount\":{\r
+
+      \      \"value\":\"10000.00\",\r
+
+      \      \"currency\":\"IDR\"\r
+
+      \   },\r
+
+      \   \"reason\":\"Customer complain\",\r
+
+      \   \"additionalInfo\":{\r
+
+      \      \"paymentId\":\"99\"\r
+
+      \   }\r
+
+      }"
+
+runtime:
+  scripts:
+    - type: before-request
+      code: |-
+        // ==========================
+        // IDENTIFIERS (runtime vars, not Postman collection vars)
+        // ==========================
+        const xtid = "XTID-" + [...Array(10)].map(() => Math.random().toString(36)[2]).join('');
+        bru.setVar('X-EXTERNAL-IDRF', xtid);
+        req.setHeader('X-EXTERNAL-IDRF', xtid);
+
+        const MRF = "MRF-" + [...Array(10)].map(() => Math.random().toString(36)[2]).join('');
+        bru.setVar('partnerRefundNo', MRF);
+
+        const clientSecret = bru.getEnvVar("vkey");
+        console.log("clientSecret..", clientSecret);
+
+        // ==========================
+        // SET AUTHORIZATION HEADER FROM STORED TOKEN
+        // ==========================
+        let token = bru.getEnvVar("token") || bru.getVar("token") || "";
+
+        if (!token) {
+            console.warn("Tidak ada token di environment!");
+        } else {
+            let value = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
+            req.setHeader("Authorization", value);
+            console.log("Authorization header di-set:", value);
+        }
+
+        // ==========================
+        // Helper hashing — Node's built-in crypto (no external package required)
+        // ==========================
+        const crypto = require('crypto');
+
+        function sha256(input) {
+            return crypto.createHash('sha256').update(input, 'utf8').digest('hex').toLowerCase();
+        }
+        function hmac512(data, key) {
+            return crypto.createHmac('sha512', key).update(data, 'utf8').digest('hex');
+        }
+
+        // ==========================
+        // X-TIMESTAMP — correct WIB (UTC+7) conversion
+        // (`.toISOString().replace('Z','+07:00')` relabels UTC as WIB without
+        //  actually shifting the clock — same bug as your other scripts)
+        // ==========================
+        function toJakartaISOString(date) {
+          const offsetMs = 7 * 60 * 60 * 1000;
+          const shifted = new Date(date.getTime() + offsetMs);
+          const pad = (n, len = 2) => String(n).padStart(len, '0');
+          const yyyy = shifted.getUTCFullYear();
+          const MM = pad(shifted.getUTCMonth() + 1);
+          const dd = pad(shifted.getUTCDate());
+          const hh = pad(shifted.getUTCHours());
+          const mm = pad(shifted.getUTCMinutes());
+          const ss = pad(shifted.getUTCSeconds());
+          const ms = pad(shifted.getUTCMilliseconds(), 3);
+          return `${yyyy}-${MM}-${dd}T${hh}:${mm}:${ss}.${ms}+07:00`;
+        }
+
+        const timestamp = toJakartaISOString(new Date());
+        req.setHeader('X-TIMESTAMP', timestamp);
+        bru.setEnvVar("X-TIMESTAMP", timestamp);
+
+        // ==========================
+        // BUILD STRING-TO-SIGN
+        // ==========================
+        const authHeader = req.getHeader("Authorization") || "";
+
+        if (!clientSecret || !authHeader || !timestamp) {
+            console.warn("⚠️ Pastikan clientSecret, Authorization header, dan X-TIMESTAMP sudah ada");
+        }
+
+        const accessToken = authHeader.startsWith("Bearer ")
+            ? authHeader.replace("Bearer ", "").trim()
+            : authHeader.trim();
+
+        const httpMethod = "POST";
+        const urlPath = "/v1.0/qr/qr-mpm-refund";
+
+        // req.getBody() shape can vary by body mode — handle defensively
+        function getRawBody() {
+            const b = req.getBody();
+            if (b == null) return "{}";
+            if (typeof b === "string") return b;
+            if (typeof b === "object" && typeof b.raw === "string") return b.raw;
+            try { return JSON.stringify(b); } catch (e) { return "{}"; }
+        }
+        const rawTemplate = getRawBody();
+
+        // Resolve {{variables}} inside the body template (e.g. {{partnerRefundNo}})
+        const resolved = bru.interpolate(rawTemplate);
+
+        // Minify: parse to validate, then re-stringify
+        let minifiedBody;
+        try {
+            const parsed = JSON.parse(resolved);
+            minifiedBody = JSON.stringify(parsed);
+        } catch (e) {
+            console.error("Body JSON invalid after variable replacement:", e);
+            throw e;
+        }
+
+        // ==========================
+        // SIGN
+        // ==========================
+        const bodyHash = sha256(minifiedBody);
+        const stringToSign = `${httpMethod}:${urlPath}:${accessToken}:${bodyHash}:${timestamp}`;
+        const signaturePayment = hmac512(stringToSign, clientSecret);
+
+        console.log("========== SIGNATURE DEBUG ==========");
+        console.log("Resolved:", resolved);
+        console.log("MinifiedBody:", minifiedBody);
+        console.log("BodyHash (SHA256):", bodyHash);
+        console.log("StringToSign:", stringToSign);
+        console.log("timestamp:", timestamp);
+        console.log("SignaturePayment (HMAC512):", signaturePayment);
+        console.log("=====================================");
+
+        bru.setVar("signatureTransaction", signaturePayment);
+        req.setHeader("X-SIGNATURE", signaturePayment);
+
+        // ==========================
+        // X-EXTERNAL-ID
+        // ==========================
+        function generateAlphanumeric(n) {
+            const AlphaNumericString = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvxyz";
+            let sb = "";
+            for (let i = 0; i < n; i++) {
+                sb += AlphaNumericString.charAt(Math.floor(Math.random() * AlphaNumericString.length));
+            }
+            return sb;
+        }
+
+        const randomString = generateAlphanumeric(35);
+        req.setHeader("X-EXTERNAL-ID", randomString);
+        bru.setEnvVar("X-EXTERNAL-ID", randomString);
+        console.log("Generated 35-char Alphanumeric:", randomString);
+
+        // ==========================
+        // Reference numbers pulled from global env
+        // ==========================
+        const originalReferenceNo = bru.getGlobalEnvVar("originalReferenceNo");
+        const originalPartnerReferenceNo = bru.getGlobalEnvVar("originalPartnerReferenceNo");
+        console.log("originalReferenceNo:", originalReferenceNo);
+        console.log("originalPartnerReferenceNo:", originalPartnerReferenceNo);
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true

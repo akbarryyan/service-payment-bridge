@@ -1,0 +1,80 @@
+info:
+  name: requery APi QRIS
+  type: http
+  seq: 2
+
+http:
+  method: POST
+  url: "{{manjo-switching-local}}/API/paymentStatusInquiry"
+  body:
+    type: json
+    data: "{\r
+
+      \  \"PaymentId\" : \"99\",\r
+
+      \  \"MerchantCode\" : \"{{merchantId}}\",\r
+
+      \  \"Currency\" : \"IDR\",\r
+
+      \  \"TransId\": \"{{TransId}}\",\r
+
+      \  \"RefNo\" : \"{{RefNoDirQ}}\",\r
+
+      \  \"Signature\" : \"{{Signature}}\"\r
+
+      }\r
+
+      \r\n"
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: before-request
+      code: |-
+        const CryptoJS = require("crypto-js");
+        // Generate partnerReferenceNo
+        let RefNoPm = bru.getGlobalEnvVar("RefNo");
+        let TransIdPm = bru.getGlobalEnvVar("TransId");
+
+        // Debug log
+        console.log("RefNoPm:", RefNoPm);
+        console.log("TransIdPm:", TransIdPm);
+
+
+
+        const merchantId = bru.getCollectionVar("merchantId");
+        console.log("merchantId.. "+merchantId);
+
+        // Get vkey and request data
+        var vkey = bru.getCollectionVar("vkey");
+        console.log("vkey.. "+vkey);
+
+        var data = JSON.parse(request.data);
+
+        // Extract values from the request body
+        var MerchantID = merchantId;
+        var Currency = data.Currency;
+        var PaymentId = data.PaymentId;
+        var ReferenceNo = RefNoPm;
+        var TransId = TransIdPm
+
+        // Concatenate the string in the same order as in Java
+        var str = vkey + MerchantID + PaymentId + ReferenceNo + TransId + Currency;
+        console.log("String before hashing:", str);
+
+        // Generate SHA-256 hash (not HMAC, not SHA1)
+        var sha256Hash = CryptoJS.SHA256(str);
+
+        // Convert the result to HEX to match Java output
+        var signature = sha256Hash.toString(CryptoJS.enc.Hex);
+
+        console.log("Generated Signature:", signature);
+
+        // Save the signature to Postman global variables
+        bru.setGlobalEnvVar('Signature', signature);
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

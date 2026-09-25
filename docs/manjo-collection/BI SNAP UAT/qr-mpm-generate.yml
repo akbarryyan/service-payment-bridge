@@ -1,0 +1,188 @@
+info:
+  name: qr-mpm-generate
+  type: http
+  seq: 2
+
+http:
+  method: POST
+  url: https://snapqris-uat.manjo.co.id/api/v1.0/qr/qr-mpm-generate
+  headers:
+    - name: Authorization
+      value: Bearer {{token}}
+    - name: X-TIMESTAMP
+      value: "{{X-TIMESTAMP}}"
+    - name: X-SIGNATURE
+      value: "{{signatureTransaction}}"
+    - name: X-PARTNER-ID
+      value: "{{merchantId}}"
+    - name: X-EXTERNAL-ID
+      value: "{{X-EXTERNAL-ID}}"
+    - name: X-IP-ADDRESS
+      value: 172.24.281.24
+    - name: X-DEVICE-ID
+      value: 09864ADCASA
+      disabled: true
+    - name: X-LATITUDE
+      value: "-6.108841"
+      disabled: true
+    - name: X-LONGITUDE
+      value: "106.7782137"
+      disabled: true
+    - name: CHANNEL-ID
+      value: "05"
+    - name: ORIGIN
+      value: " www.hostname.com"
+      disabled: true
+  body:
+    type: json
+    data: "{\r
+
+      \    \"partnerReferenceNo\": \"{{partnerReferenceNo}}\",\r
+
+      \    \"amount\": {\r
+
+      \        \"value\": \"10000.00\",\r
+
+      \        \"currency\": \"IDR\"\r
+
+      \    },\r
+
+      \    \"feeAmount\": {\r
+
+      \        \"value\": \"1000.00\",\r
+
+      \        \"currency\": \"IDR\"\r
+
+      \    },\r
+
+      \    \"merchantId\": \"{{merchantId}}\",\r
+
+      \    \"subMerchantId\": \"310928924949487\",\r
+
+      \    \"storeId\": \"abcd\",\r
+
+      \    \"terminalId\": \"213141251124\",\r
+
+      \    \"validityPeriod\": \"2009-07-03T12:08:56+07:00\",\r
+
+      \    \"additionalInfo\": {\r
+
+      \        \"paymentId\": \"99\",\r
+
+      \        \"dynamicAmount\": \"n\",\r
+
+      \        \"prodDesc\": \"Iphone 17 Pro Max\"\r
+
+      \    }\r
+
+      }"
+
+runtime:
+  scripts:
+    - type: before-request
+      code: |-
+        const crypto = require("crypto-js");
+
+        // ====================================================
+        // 1. LOAD BASE CONFIG
+        // ====================================================
+        // CORRECTED: Restored getCollectionVar so it reads from your UI settings
+        const clientKey = bru.getEnvVar("vkey"); 
+        const merchantId = bru.getEnvVar("merchantId"); 
+
+        // Token might be saved to the Environment by your Auth request, so we check both
+        let token = bru.getEnvVar("token") || bru.getVar("token") || "";
+        let accessToken = token.replace("Bearer ", "").trim();
+
+        // Guard clause to catch future missing keys
+        if (!clientKey) {
+            throw new Error("🚨 CRITICAL ERROR: 'vkey' is missing! Make sure it is in your Collection Variables.");
+        }
+        if (!merchantId) {
+            console.warn("⚠️ merchantId is missing!");
+        }
+
+        // ====================================================
+        // 2. GENERATE DYNAMIC VALUES (For your {{...}} UI tags)
+        // ====================================================
+        const ReferenceNo = [...Array(24)].map(() => Math.random().toString(36)[2]).join('').toUpperCase();
+        bru.setVar("partnerReferenceNo", ReferenceNo); 
+
+        const generateAlphanumeric = (n) => [...Array(n)].map(() => "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvxyz".charAt(Math.floor(Math.random() * 61))).join('');
+        const externalId = generateAlphanumeric(35);
+        bru.setVar("X-EXTERNAL-ID", externalId); 
+
+        const timestamp = new Date().toISOString().replace('Z','+07:00');
+        bru.setVar("X-TIMESTAMP", timestamp); 
+
+        // ====================================================
+        // 3. PREPARE THE BODY FOR HASHING
+        // ====================================================
+        let rawBody = req.getBody();
+        let bodyString = typeof rawBody === "string" ? rawBody : JSON.stringify(rawBody);
+
+        // Inject the variables into our temporary string
+        bodyString = bodyString.replace("{{partnerReferenceNo}}", ReferenceNo);
+        bodyString = bodyString.replace("{{merchantId}}", merchantId);
+
+        // Parse and re-stringify to minify it
+        const minifiedBody = JSON.stringify(JSON.parse(bodyString));
+
+        // ====================================================
+        // 4. CALCULATE SIGNATURE
+        // ====================================================
+        const bodyHash = crypto.SHA256(minifiedBody).toString(crypto.enc.Hex).toLowerCase();
+        const stringToSign = "POST:/v1.0/qr/qr-mpm-generate:" + accessToken + ":" + bodyHash + ":" + timestamp;
+        const signaturePayment = crypto.HmacSHA512(stringToSign, clientKey).toString(crypto.enc.Hex);
+
+        bru.setVar("signatureTransaction", signaturePayment); 
+
+        // ====================================================
+        // DEBUG LOGS
+        // ====================================================
+        console.log("========== SIGNATURE DEBUG ==========");
+        console.log("Minified Body:", minifiedBody);
+        console.log("StringToSign:", stringToSign);
+        console.log("Signature:", signaturePayment);
+        console.log("=====================================");
+    - type: after-response
+      code: |-
+        const body = res.getBody();
+
+        if (body) {
+            try {
+                let jsonData = res.getBody();
+
+                if (jsonData) {
+                    if (jsonData.referenceNo) {
+                        bru.setGlobalEnvVar("originalReferenceNo", jsonData.referenceNo);
+                        bru.setEnvVar("originalReferenceNo", jsonData.referenceNo)
+                        console.log("✅ referenceNo saved:", jsonData.referenceNo);
+                    } else {
+                        console.warn("⚠️ referenceNo not found in response:", jsonData);
+                    }
+
+                    if (jsonData.partnerReferenceNo) {
+                        bru.setGlobalEnvVar("originalPartnerReferenceNo", jsonData.partnerReferenceNo);
+                        bru.setEnvVar("originalPartnerReferenceNo", jsonData.partnerReferenceNo)
+                        console.log("✅ partnerReferenceNo saved:", jsonData.partnerReferenceNo);
+                    } else {
+                        console.warn("⚠️ partnerReferenceNo not found in response:", jsonData);
+                    }
+                } else {
+                    console.warn("⚠️ Empty JSON response.");
+                }
+
+            } catch (err) {
+                console.error("❌ Failed to parse JSON response:", err);
+            }
+        } else {
+            console.warn("⚠️ No response body to read.");
+        }
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true

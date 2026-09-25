@@ -1,0 +1,7 @@
+info:
+  name: BI SNAP
+  type: folder
+  seq: 1
+
+request:
+  auth: inherit

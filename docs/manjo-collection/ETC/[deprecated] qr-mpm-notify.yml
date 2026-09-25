@@ -1,0 +1,84 @@
+info:
+  name: "[deprecated] qr-mpm-notify"
+  type: http
+  seq: 5
+
+http:
+  method: POST
+  url: "{{manjo-switching-uat}}/snap/api/v1.0/qr-mpm-notify"
+  headers:
+    - name: X-CLIENT-KEY
+      value: MANJO-QRIS
+    - name: X-SIGNATURE
+      value: 23fc6ca6111505650cacbc6e439b5573466429f35a5253b1540b288c6b2ff38225cb952f0399ca0455752084904bcd7eadb2cc9f06d9f1c4e4f9fcfbb85d958c383454f397aaa9ac09e4101c4091db87529a5b150d3b127ddbf560ee0601ac2573b5ce98472271d2af2afdd497843ef33d652ce751742feb0be41fb478bf19b3713db16f37eb34c847e359476e68e3c8f7476066474dc4f321f4b8d12df1cea33ef67945d9c2d9d55274658525a9b529031304458172d53dfe707a5ed98914103d075773c5696b2f43d166efd5d9f84d866bc12427c59003b1d0ba39c584b20d302c7d15280feff8c5b224373ef61abd3024de3a0805c9afb7afe25fbebee610
+    - name: X-TIMESTAMP
+      value: 2025-09-19T13:00:00+07:00
+    - name: Authorization
+      value: Bearer fa8sjjEj813Y9JGoqwOeOPWbnt4CUpvIJbU1mMU4a11MNDZ7Sg5u9a
+    - name: Authorization-Customer
+      value: Bearer fa8sjjEj813Y9JGoqwOeOPWbnt4CUpvIJbU1mMU4a11MNDZ7Sg5u9a
+    - name: ORIGIN
+      value: www.hostname.com
+    - name: X-PARTNER-ID
+      value: "82150823919040624621823174737537"
+    - name: X-EXTERNAL-ID
+      value: "41807553358950093184162180797837"
+    - name: X-IP-ADDRESS
+      value: 172.24.281.24
+    - name: X-DEVICE-ID
+      value: 09864ADCASA
+    - name: X-LATITUDE
+      value: "-6.108841"
+    - name: X-LONGITUDE
+      value: "106.7782137"
+    - name: CHANNEL-ID
+      value: "95221"
+  body:
+    type: json
+    data: "{\r
+
+      \   \"originalReferenceNo\":\"A0000000736\",\r
+
+      \   \"originalPartnerReferenceNo\":\"DIRECT-API-NMS-xhdmr9vywp\",\r
+
+      \   \"latestTransactionStatus\":\"00\",\r
+
+      \   \"transactionStatusDesc\":\"success\",\r
+
+      \   \"customerNumber\":\"6281388370001\",\r
+
+      \   \"accountType\":\"tabungan\",\r
+
+      \   \"destinationNumber\":\"8377388292\",\r
+
+      \   \"destinationAccountName\":\"John Doe\",\r
+
+      \   \"amount\":{\r
+
+      \      \"value\":\"12345678.00\",\r
+
+      \      \"currency\":\"IDR\"\r
+
+      \   },\r
+
+      \   \"sessionId\":\"0UYEB77329002HY\",\r
+
+      \   \"bankCode\":\"002\",\r
+
+      \   \"externalStoreId\":\"124928924949487\",\r
+
+      \   \"additionalInfo\":{\r
+
+      \      \"deviceId\":\"12345679237\",\r
+
+      \      \"channel\":\"mobilephone\"\r
+
+      \   }\r
+
+      }"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

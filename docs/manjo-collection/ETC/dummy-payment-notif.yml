@@ -1,0 +1,24 @@
+info:
+  name: dummy-payment-notif
+  type: http
+  seq: 4
+
+http:
+  method: POST
+  url: https://webhook.site/772d933c-3e38-4d33-b105-18bfb7086817
+  headers:
+    - name: X-CLIENT-KEY
+      value: EP8419210099
+    - name: X-SIGNATURE
+      value: 7264457121211eb31d0242b2cc9aa37fd856827ece961b5fa810de564094ad704cd7113d3c6eaf1b11139df2954d69f6b87676afdfec69890bb29a134c32c0bc03602795e658970a98bf144a60341e20e3336dc4c09d6987b68fcc5b2d3e32bf5bd841349e150ed01bf47c3b70b0b29d3c5ba827d03667cdefe5b260eb71bd9a17528d4e12ab251d9848f0a7e9b1c29195ed5155f5605dfbc01134d79dd3440f7825c63497c9f34e881c15d367285c90d6a04b5a7ec3204486a5b65666b534ab761887f2cabc7636479e013d8830f36623340f4af1b6f8b3eea5535fd6f305b2ac136a47fcd583037f50d41fe66a85304bcfd0923be021418c7c50df2c12c53a
+    - name: X-TIMESTAMP
+      value: 2025-09-19T13:00:00+07:00
+  body:
+    type: json
+    data: "{\r\n}"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

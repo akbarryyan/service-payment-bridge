@@ -1,0 +1,122 @@
+info:
+  name: "[BRI]Direct API"
+  type: http
+  seq: 5
+
+http:
+  method: POST
+  url: https://mmsapi-test.manjo.co.id/merchant-switching/services/directPayment
+  body:
+    type: json
+    data: "{\r
+
+      \    \"MerchantCode\": \"{{merchantId}}\",\r
+
+      \    \"PaymentId\": \"40\",\r
+
+      \    \"RefNo\": \"{{RefNo}}\",\r
+
+      \    \"Amount\": \"3000000\",\r
+
+      \    \"Currency\": \"IDR\",\r
+
+      \    \"ProdDesc\": \"Tes Barang\",\r
+
+      \    \"UserName\": \"tes\",\r
+
+      \    \"UserEmail\": \"tes@email.com\",\r
+
+      \    \"UserContact\": \"087787876321\",\r
+
+      \    \"Remark\": \"test\",\r
+
+      \    \"Lang\": \"UTF-8\",\r
+
+      \    \"Signature\": \"{{Signature}}\",\r
+
+      \    \"CallBackURL\": \"https://webhook.site/096cc66c-1dae-4a70-b1ce-ccd43c7eedd9\"\r
+
+      }\r\n"
+  auth:
+    type: basic
+    username: appserver
+    password: adidatam0b1l3
+
+runtime:
+  scripts:
+    - type: before-request
+      code: |-
+        const CryptoJS = require("crypto-js");
+        const merchantId = bru.getCollectionVar("merchantId");
+        console.log("merchantId.. "+merchantId);
+
+        //Get MerchantID and vkey pre-set as environmental variables
+        // vkey = "c26fbcf925f4d4102908c742f4d0dbe0";
+        //vkey = "8kv3PeYtrS";
+        //vkey = "c6b000c4052809efa85860ce0b3d1b5f"
+        var vkey = bru.getCollectionVar("vkey");
+        console.log("vkey.. "+vkey);
+
+        data = JSON.parse(req.getBody());
+
+        ReferenceNo = "DIRECT-API-NMS-"+[...Array(10)].map(() => Math.random().toString(36)[2]).join('');
+        pm.collectionVariables.set('RefNo', ReferenceNo);
+
+        //var ReferenceNo = data.RefNo;
+        var TxnAmount = data.Amount;
+        var MerchantID = bru.getEnvVar("merchantId");
+        var Currency = data.Currency;
+
+
+        str = vkey + MerchantID + ReferenceNo + TxnAmount + Currency;
+        console.log(str);
+
+        // Generate SHA-256 hash (not HMAC, not SHA1)
+        var sha256Hash = CryptoJS.SHA256(str);
+
+        // Convert the result to HEX to match Java output
+        var signature = sha256Hash.toString(CryptoJS.enc.Hex);
+
+        console.log("Generated Signature:", signature);
+
+        // Save the signature to Postman global variables
+        bru.setGlobalEnvVar('Signature', signature);
+    - type: after-response
+      code: |-
+        if (pm.response && JSON.stringify(res.getBody())) {
+            try {
+                let jsonData = res.getBody();
+
+                if (jsonData) {
+                    if (jsonData.RefNo) {
+                        bru.setGlobalEnvVar("RefNoDirectVa", jsonData.RefNo);
+                        console.log("✅ RefNoDirectVa saved:", jsonData.RefNo);
+                    } else {
+                        console.warn("⚠️ RefNoDirectVa not found in response:", jsonData);
+                    }
+                    if (jsonData.PaymentId) {
+                        pm.collectionVariables.set("PaymentId", jsonData.PaymentId);
+                    } else {
+                        console.warn("⚠️ PaymentId not found in response:", jsonData);
+                    }
+                    if (jsonData.TransId) {
+                        pm.collectionVariables.set("TransId", jsonData.TransId);
+                    } else {
+                        console.warn("⚠️ TransId not found in response:", jsonData);
+                    }
+                } else {
+                    console.warn("⚠️ Empty JSON response.");
+                }
+
+            } catch (err) {
+                console.error("❌ Failed to parse JSON response:", err);
+            }
+        } else {
+            console.warn("⚠️ No response body to read.");
+        }
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

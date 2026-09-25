@@ -1,0 +1,24 @@
+info:
+  name: "[deprecated] signature"
+  type: http
+  seq: 6
+
+http:
+  method: POST
+  url: "{{manjo-switching-local}}/snap/api/v1.0/qr/signature-auth"
+  headers:
+    - name: X-CLIENT-KEY
+      value: EP8419210099
+    - name: X-TIMESTAMP
+      value: 2025-09-19T13:00:00+07:00
+    - name: Private_Key
+      value: -----BEGIN PRIVATE KEY-----MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC/6VxRwwiI6gCXJds+Duz/sfD7/TK7kQITKlLMpgcQ3ex3nxucpWQmy3HKfgwHbuWO7aiqwWUxzV/p1u+7RoL2AmjWJcV+OJovwxaSrwrjx3lxYXUE6T8xFy8UsN/1rKyH7tpH1cwVjUDReMe74rlJp6JOqxi30Rh3+Hmw9gw5hGb7IpZB/RoUAPgwMm3vs+e7feu/haq4tnOBunXX9gXaZcm/UyAnbDpXKz7d3dMTnQVsExNTZXZuMQMTeyYcyhopn757GO52VrEJoD9prPD+LwOy3V0Sw+9PhmCJMmg3P/cqaBt+xFkXR5Lee4wOWLCMWKZb/i4aWHNuvmn385X7AgMBAAECggEAXtfQ4LVu798ZiJlUZzCQLvO9QYPKAUlySY92mR4KSusqVJnk1v8j5kpQA79UaY4EVCUe4LiwLrMtTg8Drj10NmlNb1v+ZNlLVgRnkPmB+70WxxJfdxxgtv2arnKVVEBQieNgq/S8pgAHgx5aM4AiiwSWIaPMFPf4zD2Xwn1u4DM0NUgT5iZKvWSndQUFDZHn+fWL8GZ6H5Qgtd3/y9q94HL78yuiQjPwszwLZ0HSD3t6CBqpLqcpDXTdxnSb0n9jvIESMs/j8WO9DYXdF1GV7x18KbBNcI0kphcUX+99vFuc83aoWEfa3ZaykmWgwa2qhP/Rm0NWjbKSd8bgWbrSWQKBgQDn2u/7/SeL/VGmFPOrfQKhaQVs+PGcIUtDfTV/IsCqrLHp4uy3idJM1qocDEM7FMf1UsuOF2ahSVcFTvlRNiGmupSCKgSUTxMWLielbmNnaPf6w+sZPGMvg5+lLMEqdd9qAl9E6/+VsS3+yKxpn1tvaQU5jp7+3gF44p1tUL4QcwKBgQDT5Y8tYIhLPiB44dysfmwiPMEQIaQ2cXYl76OjU0jz0N3osENh6Qw3i67J5Vu27vPohcfTEB4OThdscP512aJqEX0+7xKZclvi9ruYYSxCRWKDSFhjXCEiyvFvKX50l0H540CxjyajSgMtWQUA1sYdQp+KQouyk6ypQGbHUd8qWQKBgB8Y2FM98w3tngPej4gSrkWj5lxlT1KXjJaytngk2x6JJxutmf5L9+7iY9J7OpE0ClW3EyIttVAwnAFURFBGKGFKaRzEMfUKXg79hcfEdISsKYZyvJeX5925k7H9vLLLOHnpc4m09YTITNj9ZVKNUyAwP8kmfeDFOgFSs7azu6pNAoGADjkXbjVPkLVf2p1WgaGOwpGPZ/TKH/lns84tDrZ1bCA19Pt32meZMVVH6zdg+5t4dcAdFJa9XbpyKg4/lkuAclwwKvxDJFefwVFMcEL9hIlBvowpmqnBc6Npp0uCuHK6s/pECmcQcd9y7SVPh6ni7G3fZZln5Rmyej3faDufnikCgYEAyEmZdgF7q+h9TbYYNnZyZt6VhtAmUdWxEkcm78IOXfDSd/3ggp5Pnkv6hAUbeP4SVuTcidoVhT5JzIRNxmDoi0jPEYgle42O0ivvITxizNK63Gav4snJLx40XqCS6HGnjEiBR0c4rzfVyq40oJ2IzDqUcjC8uUvDP0NbZHb/E+0=-----END PRIVATE KEY-----
+  body:
+    type: json
+    data: "{}"
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

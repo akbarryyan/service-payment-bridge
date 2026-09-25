@@ -1,0 +1,156 @@
+info:
+  name: QR Payment
+  type: http
+  seq: 5
+
+http:
+  method: POST
+  url: https://mmsapi-test.manjo.co.id/altopay/qr-payment/payment
+  headers:
+    - name: X-Alto-Timestamp
+      value: "{{timestamp}}"
+    - name: X-Alto-Key
+      value: akey_NjwW73gz90xmtDtpbgAj
+    - name: X-Alto-Signature
+      value: "{{signature}}"
+    - name: Content-Type
+      value: application/json
+  body:
+    type: json
+    data: |-
+      {
+        "command": "qr-payment-credit",
+        "data": {
+          "date_time": "{{timestamp}}",
+          "customer_reference_number": "{{rrn}}",
+          "authorization_id": "FCC7B6",
+          "currency_code": "IDR",
+          "amount": 10000,
+          "fee": 0,
+          "issuer_nns": "93600821",
+          "acquirer_nns": "93600858",
+          "national_mid": "MT60169117",
+          "additional_data": "0524{{ref_id}}07034270817Auto Loan Account",
+          "terminal_label": "427",
+          "forwarding_customer_reference_number": "{{forward_rrn}}",
+          "merchant": {
+            "pan": "9360085801764127112",
+            "id": "MT60169117",
+            "criteria": "UKE",
+            "name": "Ayoborong",
+            "city": "JAKARTA PUSAT",
+            "mcc": "5251",
+            "postal_code": "10110",
+            "country_code": "ID"
+          },
+          "customer": {
+            "pan": "9360085801764127112",
+            "name": "Tes",
+            "account_type": "UNSPECIFIED"
+          }
+        }
+      }
+  auth: inherit
+
+runtime:
+  variables:
+    - name: ref_id
+      value: c2nr1d67q4q6vduv7kmvsgon
+  scripts:
+    - type: before-request
+      code: |-
+        const CryptoJS = require("crypto-js");
+        const { v4: uuidv4 } = require("uuid"); // <-- Add this to import Bruno's native UUID generator
+
+        // ================= CONFIG =================
+        const HTTP_METHOD    = "POST";
+        const CANONICAL_URL  = "/altopay/qr-payment/payment";
+        const API_KEY        = "akey_NjwW73gz90xmtDtpbgAj";
+        const VALIDATION_KEY = "vkey_TLLbu9qp3Uj94j4ks2DU";
+
+        // ================= TIMESTAMP (FORMAT JMeter) =================
+        function getUTCTimestamp() {
+            const now = new Date();
+            return now.getUTCFullYear() + "-" +
+                String(now.getUTCMonth() + 1).padStart(2, '0') + "-" +
+                String(now.getUTCDate()).padStart(2, '0') + " " +   // <-- WAJIB SPACE
+                String(now.getUTCHours()).padStart(2, '0') + ":" +
+                String(now.getUTCMinutes()).padStart(2, '0') + ":" +
+                String(now.getUTCSeconds()).padStart(2, '0') + "." +
+                String(now.getUTCMilliseconds()).padStart(3, '0') + "Z";
+        }
+
+        const timestamp = getUTCTimestamp();
+        bru.setVar("timestamp", timestamp);
+
+        // ================= RRN =================
+        function generateRRN() {
+            // Replace crypto.randomUUID() with uuidv4()
+            return "ALTO-API-NMS-" + uuidv4().replace(/-/g, '').substring(0, 12);
+        }
+
+        const rrn = generateRRN();
+        bru.setVar("rrn", rrn);
+
+        // ================= FORWARD RRN (MAX 12 CHARS) =================
+        function generateForwardRRN() {
+            // Replace crypto.randomUUID() with uuidv4()
+            return uuidv4().replace(/-/g, '').substring(0, 12);
+        }
+
+        const forwardRrn = generateForwardRRN();
+        bru.setVar("forward_rrn", forwardRrn);
+
+        // ================= RESOLVE BODY (KRITIKAL) =================
+        // Gunakan ini agar {{}} benar-benar jadi value real
+        let rawBody = bru.interpolate(req.getBody()); // Adjusted slightly: req.getBody() returns the body data natively in Bruno
+
+        // Jika rawBody berupa object (Bruno auto-parses JSON), ubah ke string untuk proses selanjutnya
+        if (typeof rawBody !== 'string') {
+            rawBody = JSON.stringify(rawBody);
+        }
+
+        // ================= JSON → COMPACT (MENIRU JMeter) =================
+        // WAJIB: parse lalu stringify → normalize
+        let compactJson;
+        try {
+            const jsonObj = JSON.parse(rawBody);
+            compactJson = JSON.stringify(jsonObj);
+        } catch (e) {
+            console.error("JSON parse error:", e);
+            throw e;
+        }
+
+        // ================= SHA256 =================
+        const payloadHash = CryptoJS.SHA256(compactJson)
+            .toString(CryptoJS.enc.Hex);
+
+        // ================= PLAINTEXT =================
+        const plainText = HTTP_METHOD + ":" +
+                          CANONICAL_URL + ":" +
+                          API_KEY + ":" +
+                          payloadHash + ":" +
+                          timestamp;
+
+        // ================= SIGNATURE =================
+        const signature = CryptoJS.HmacSHA256(plainText, VALIDATION_KEY)
+            .toString(CryptoJS.enc.Hex);
+
+        // ================= SET VARIABLE =================
+        bru.setVar("signature", signature);
+
+        // ================= DEBUG (WAJIB UNTUK CROSSCHECK) =================
+        console.log("=== BRUNO DEBUG ===");
+        console.log("TIMESTAMP    :", timestamp);
+        console.log("RRN          :", rrn);
+        console.log("BODY FINAL   :", rawBody);
+        console.log("COMPACT JSON :", compactJson);
+        console.log("HASH         :", payloadHash);
+        console.log("PLAINTEXT    :", plainText);
+        console.log("SIGNATURE    :", signature);
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

@@ -1,0 +1,18 @@
+info:
+  name: REFRESH CACHE
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: "{{manjo-switching-local}}/merchant-switching/services/refreshCache"
+  headers:
+    - name: X-Authorization
+      value: ""
+      disabled: true
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

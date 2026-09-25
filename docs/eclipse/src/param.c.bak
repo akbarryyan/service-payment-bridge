@@ -1,0 +1,353 @@
+#include "def.h"
+#include "func.h"
+
+#include <coredef.h>
+#include <struct.h>
+#include <poslib.h>
+#include <string.h>
+#include <Q161Func_From_Devlib.h>
+
+SYS_PARAM G_sys_param;
+int Device_Type;
+int G_InputFlag = 0 ;   //0-not inputting       1-inputting
+int G_scrtype = 2;		//main screen type
+
+static void readSN(char *sn)
+{
+	int ret;
+	unsigned char buf[40];
+
+	ret = PEDReadPinPadSn_Api(buf);
+	if (ret != 0) {
+		// Serial number lost, warning and poweroff.
+		AppPlayTip("Serial number lost, power off now");
+
+		WaitAnyKey_Api(10);
+		SysPowerOff_Api();
+
+		while (1);
+	}
+
+	ret = AscToLong_Api(buf, 2);
+	buf[ret + 2] = 0;
+
+	strcpy(sn, (char *)(buf + 2));
+
+	LogPrintInfo(sn);
+}
+
+void initParam(void)
+{
+	int ret;
+	unsigned int len;
+
+	// ==================== EMV CTRLPARAM
+	memset(&gCtrlParam, 0, sizeof(gCtrlParam));
+	gCtrlParam.lTraceNo    = 1;
+	gCtrlParam.lNowBatchNum= 1;
+
+	strcpy(gCtrlParam.MerchantName, "merchant test");
+	strcpy(gCtrlParam.MerchantNo,   "105290045110223");
+	strcpy(gCtrlParam.TerminalNo,   "00119952");
+
+	gCtrlParam.beepForInput		 = 0;
+	gCtrlParam.oprTimeoutValue	 = 60;
+	gCtrlParam.tradeTimeoutValue = 60;
+	gCtrlParam.ShieldPAN         = 1;
+
+	gCtrlParam.pinpad_type = PIN_PED;
+	gCtrlParam.AKeyIndes   = 0;
+	gCtrlParam.MainKeyIdx  = 1;
+	gCtrlParam.MacKeyIndes = 0;
+	gCtrlParam.PinKeyIndes = 2;
+	gCtrlParam.DesType     = 0;
+
+	gCtrlParam.SupportICC  = 1;
+	gCtrlParam.SupportPICC = PEDPICCCARD;
+
+	gCtrlParam.SupportSignPad = 0;
+	gCtrlParam.SignTimeoutS   = 150;
+	gCtrlParam.SignMaxNum     = 8;
+	gCtrlParam.SignBagMaxLen  = 900;
+	// ====================
+
+	ret = GetFileSize_Api(SYS_PARAM_NAME);
+	if (ret == sizeof(SYS_PARAM)) {
+		len = ret;
+		ret = ReadFile_Api(SYS_PARAM_NAME, (unsigned char *)&G_sys_param, 0, &len);
+		if ((ret == 0) && (len == sizeof(SYS_PARAM))) {
+			readSN(G_sys_param.sn);
+			return;
+		}
+	}
+
+	memset(&G_sys_param, 0, sizeof(SYS_PARAM));
+
+	readSN(G_sys_param.sn);
+
+	strcpy(G_sys_param.mqtt_server, "115.159.28.147");
+	//strcpy(G_sys_param.mqtt_server, "broker.hivemq.com");
+	strcpy(G_sys_param.mqtt_port,   "1883");
+	G_sys_param.mqtt_ssl = 0;
+
+	sprintf(G_sys_param.mqtt_topic,     "topic_%s",    G_sys_param.sn);
+	sprintf(G_sys_param.mqtt_client_id, "clientId-%s", G_sys_param.sn);
+
+	G_sys_param.mqtt_qos 	   = 0;
+	G_sys_param.mqtt_keepalive = 60;
+	G_sys_param.sound_level    = 1;
+	G_sys_param.commode = TRANCOMM_WIFI;
+	saveParam();
+}
+
+void initDeviceType()
+{
+	char machineType[26];
+	int Result = 0, ret;
+
+	memset(machineType, 0, sizeof(machineType));
+
+	Result = sysGetTermType_Api(&machineType);
+	if (Result >= 0)
+	{
+		char info[24] = "";
+		sprintf(info, "device type = %s", machineType);
+		LogPrintInfo(info);
+
+		ret = memcmp(machineType, "Q180D", 5);
+		if (ret == 0) {
+			Device_Type = 2;
+		}
+
+		ret = memcmp(machineType, "Q190", 4);
+		if (ret == 0) {
+			Device_Type = 3;
+			QRCodeDisp();
+		}
+
+		ret = memcmp(machineType, "Q161Pro", 7);
+		if (ret == 0) {
+			Device_Type = 4;
+		}
+	}
+
+	G_scrtype = sysGetTermScreenType_lib();
+	MAINLOG_L1("scrtype:%d", G_scrtype);
+}
+
+void saveParam(void)
+{
+	SaveWholeFile_Api(SYS_PARAM_NAME, (unsigned char *)&G_sys_param, sizeof(SYS_PARAM));
+}
+
+
+void SetCommMode()
+{
+	int ret, i, key, idx;
+	char tmp[64];
+	ST_AP_LIST stAplist[10];
+	int fline, sline;
+	char *G_wifiList[10];
+	char G_wlist[10][68];
+	int wfnum;
+
+	if(isSmallMainScreen())
+	{
+		fline = LINE1;
+		sline = LINE2;
+	}
+	else
+	{
+		fline = LINE3;
+		sline = LINE4;
+	}
+
+	ScrCls_Api();
+	if(G_sys_param.commode == TRANCOMM_SIM)
+		ScrDisp_Api(fline, 0, "Input Mode (SIM)", LDISP);
+	else if(G_sys_param.commode == TRANCOMM_WIFI)
+		ScrDisp_Api(fline, 0, "Input Mode (wifi)", LDISP);
+	ScrDisp_Api(sline, 0, "1-SIM  2-WIFI", LDISP);
+	if(isSmallMainScreen())
+	{
+		WaitAnyKey_Api(3);
+		ScrDisp_Api(fline, 0, "Input Mode:", LDISP);
+		memset(tmp, 0, sizeof(tmp));
+		ret = GetScanfAndCheck(MMI_NUMBER, 0, 1, tmp, 30, LINE2, LINE2, 16, MMI_NUMBER);
+	}
+	else
+	{
+		memset(tmp, 0, sizeof(tmp));
+		ret = GetScanfAndCheck(MMI_NUMBER, 0, 1, tmp, 30, LINE5, LINE5, 16, MMI_NUMBER);
+	}
+	if((ret == ENTER) && (tmp[0] != 0))
+	{
+		if(tmp[1] == '1')
+		{
+			if(G_sys_param.commode == TRANCOMM_SIM)
+				return;
+
+			G_sys_param.commode = TRANCOMM_SIM;
+			saveParam();
+			NetModuleOper_Api(WIFI, 0);
+			NetModuleOper_Api(GPRS, 1);
+		}
+		else if(tmp[1] == '2')
+		{
+			if(G_sys_param.commode != TRANCOMM_WIFI)
+			{
+				G_sys_param.commode = TRANCOMM_WIFI;
+				saveParam();
+				NetModuleOper_Api(GPRS, 0);
+				ret = NetModuleOper_Api(WIFI, 1);
+				MAINLOG_L1("NetModuleOper_Api wifi:%d",ret);
+
+				ret = wifiOpen_Api();
+				MAINLOG_L1("wifiOpen_Api:%d", ret);
+				if(ret != 0)
+					return;
+			}
+
+			ret = wifiGetLinkStatus_Api();
+			if(ret == 2 || ret == 3 || ret == 4)
+			{
+				ScrClrLine_Api(LINE2, LINE10);
+				if(isSmallMainScreen())
+					ScrDisp_Api(LINE2, 0, "config again?", LDISP);
+				else
+					ScrDisp_Api(LINE3, 0, "AP connected, config again?", LDISP);
+
+				ScrDisp_Api(sline, 0, "0-NO  1-YES", LDISP);
+
+				if(isSmallMainScreen())
+				{
+					WaitAnyKey_Api(3);
+					ScrDisp_Api(LINE1, 0, "Input(0-N 1-Y):", LDISP);
+					memset(tmp, 0, sizeof(tmp));
+					ret = GetScanfAndCheck(MMI_NUMBER, 0, 1, tmp, 30, LINE2, LINE2, 16, MMI_NUMBER);
+					MAINLOG_L1("config again:%d", ret);
+				}
+				else
+				{
+					memset(tmp, 0, sizeof(tmp));
+					ret = GetScanfAndCheck(MMI_NUMBER, 0, 1, tmp, 30, LINE5, LINE5, 16, MMI_NUMBER);
+				}
+
+				if(ret != ENTER)
+					return ;
+				else if(tmp[1] != '1')
+					return ;
+			}
+
+			ScrCls_Api();
+			ScrDisp_Api(fline, 0, "WIFI CONFIGURATION", CDISP);
+			ScrDisp_Api(sline, 0, "Scanning WIFI...", CDISP);
+			memset(&stAplist[0], 0, sizeof(stAplist));
+			ret = wifiScan_Api(stAplist, 10);
+			MAINLOG_L1("wifiScan_Api_1:%d", ret);
+			if(ret <= 0)
+			{
+				ScrClrLine_Api(LINE2, LINE10);
+				ScrDisp_Api(LINE2, 0, "No WIFI !", CDISP);
+				WaitAnyKey_Api(3);
+				return ;
+			}
+
+			wfnum = ret;
+			memset(G_wlist, 0, sizeof(G_wlist));
+			memset(G_wifiList, 0, sizeof(G_wifiList[0])*10);
+			for(i = 0; i < ret; i++)
+			{
+				sprintf(G_wlist[i], "%d. %s", i+1, stAplist[i].cSsid);
+				G_wifiList[i] = &G_wlist[i][0];
+			}
+
+			while (1)
+			{
+				key = ShowMenuItem("WIFI LIST", G_wifiList, wfnum, DIGITAL1, DIGITAL0 + wfnum, 0, 60);
+				if(key >= 0x31 && key <= (0x30+wfnum))
+				{
+					idx = key-0x31;
+					break;
+				}
+				else if(key == ESC || key == TIMEOUT)
+				{
+					Beep_Api(1);
+					return;
+				}
+			}
+
+			memset(tmp, 0, sizeof(tmp));
+			sprintf(tmp, "Input PWD(%s)", stAplist[idx].cSsid);
+			ScrClrLine_Api(LINE2, 0x0d);
+			ScrDisp_Api(fline, 0, tmp, LDISP);
+			memset(tmp, 0, sizeof(tmp));
+			if(isSmallMainScreen())
+				ret = GetScanfAndCheck(MMI_LETTER|MMI_NUMBER|MMI_SYMBOL, 0, 16, tmp, 16, LINE2, LINE2, 16, MMI_LETTER);
+			else
+				ret = GetScanfAndCheck(MMI_LETTER|MMI_NUMBER|MMI_SYMBOL, 0, 16, tmp, 16, LINE4, LINE4, 16, MMI_LETTER);
+
+			if((ret == ENTER) && (tmp[0] != 0))
+			{
+				MAINLOG_L1("password len:%d, password:%s  ssid:%s", tmp[0], tmp+1, stAplist[idx].cSsid);
+				ret = wifiAPConnect_Api(stAplist[idx].cSsid, tmp+1);
+				MAINLOG_L1("wifiAPConnect_Api:%d", ret);
+				ScrClrLine_Api(fline, LINE10);
+				if(ret != 0)
+					ScrDisp_Api(sline, 0, "Connect failed!", LDISP);
+				else
+				{
+					memset(G_sys_param.wifiSsid, 0, sizeof(G_sys_param.wifiSsid));
+					memset(G_sys_param.wifiPwd, 0, sizeof(G_sys_param.wifiPwd));
+					strcpy(G_sys_param.wifiSsid, stAplist[idx].cSsid);
+					strcpy(G_sys_param.wifiPwd, tmp+1);
+					saveParam();
+					ScrDisp_Api(sline, 0, "Connect success!", LDISP);
+				}
+				WaitAnyKey_Api(3);
+			}
+			else
+			{
+				ScrDisp_Api(sline, 0, "Input failure!", LDISP);
+				WaitAnyKey_Api(3);
+			}
+		}
+	}
+}
+
+void SetVtmsLogOutputFlag()
+{
+#ifdef __MACHINE_Q181Q190__
+	OutputLogSwitch(1, 2);
+	AppPlayTip("VTMS logs will be output");
+#else
+	int ret;
+	char tmp[16];
+
+	ScrCls_Api();
+	if(isSmallMainScreen())
+	{
+		ScrDisp_Api(LINE1, 0, "Vtms Log output?", LDISP);
+		ScrDisp_Api(LINE2, 0, "1-YES  2-NO", LDISP);
+		WaitAnyKey_Api(3);
+		ScrDisp_Api(LINE1, 0, "Input (1-Y 2-N):", LDISP);
+		memset(tmp, 0, sizeof(tmp));
+		ret = GetScanfAndCheck(MMI_NUMBER, 0, 1, tmp, 30, LINE2, LINE2, 16, MMI_NUMBER);
+	}
+	else
+	{
+		ScrDisp_Api(LINE3, 0, "Vtms Log output ?", LDISP);
+		ScrDisp_Api(LINE4, 0, "1-YES  2-NO", LDISP);
+		memset(tmp, 0, sizeof(tmp));
+		ret = GetScanfAndCheck(MMI_NUMBER, 0, 1, tmp, 30, LINE5, LINE5, 16, MMI_NUMBER);
+	}
+
+	if((ret == ENTER) && (tmp[0] != 0))
+	{
+		if(tmp[1] == '1')
+			OutputLogSwitch(1, 2); //output tms logs
+		else
+			OutputLogSwitch(0, 2); //not output tms logs
+	}
+#endif
+}

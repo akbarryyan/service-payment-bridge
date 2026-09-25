@@ -1,0 +1,97 @@
+info:
+  name: refund APi QRIS
+  type: http
+  seq: 3
+
+http:
+  method: POST
+  url: "{{manjo-switching-local}}/merchant-switching/qris/refund"
+  body:
+    type: json
+    data: "{\r
+
+      \    \"MerchantCode\":\"{{merchantId}}\",\r
+
+      \    \"PaymentId\":\"99\",\r
+
+      \    \"RefNo\":\"{{RefNo}}\",\r
+
+      \    \"TransId\": \"{{TransId}}\",\r
+
+      \    \"Amount\": \"1000000\",\r
+
+      \    \"Currency\":\"IDR\",\r
+
+      \    \"Signature\":\"{{Signature}}\",\r
+
+      \    \"DateRequest\": \"{{DateRequest}}\"\r
+
+      }"
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: before-request
+      code: |-
+        const CryptoJS = require("crypto-js");
+        // Generate partnerReferenceNo
+        let RefNoPm = bru.getGlobalEnvVar("RefNo");
+        let TransIdPm = bru.getGlobalEnvVar("TransId");
+
+        // Debug log
+        console.log("RefNoPm:", RefNoPm);
+        console.log("TransIdPm:", TransIdPm);
+
+        const merchantId = bru.getCollectionVar("merchantId");
+        console.log("merchantId.. "+merchantId);
+
+        // Get vkey and request data
+        var vkey = bru.getCollectionVar("vkey");
+        console.log("vkey.. "+vkey);
+
+        var data = JSON.parse(request.data);
+        console.log("auuuu");
+        // Extract values from the request body
+        var TxnAmount = data.Amount;
+        var MerchantID = merchantId;
+        var ReferenceNo = RefNoPm;
+
+        // ==== Generate DateRequest (yyyy-MM-dd HH:mm:ss) ====
+        function formatDate(d) {
+            return d.getFullYear() + "-" +
+                String(d.getMonth() + 1).padStart(2, '0') + "-" +
+                String(d.getDate()).padStart(2, '0') + " " +
+                String(d.getHours()).padStart(2, '0') + ":" +
+                String(d.getMinutes()).padStart(2, '0') + ":" +
+                String(d.getSeconds()).padStart(2, '0');
+        }
+        var now = new Date();
+        var dateRequest = formatDate(now);
+        pm.collectionVariables.set("DateRequest", dateRequest);
+
+        // Concatenate the string in the SAME ORDER as server
+        var str = vkey + MerchantID + dateRequest + ReferenceNo + TxnAmount;
+        console.log("String before hashing:", str);
+
+        // Generate SHA-256 hash
+        var sha256Hash = CryptoJS.SHA256(str);
+
+        // Convert to HEX
+        var signature = sha256Hash.toString(CryptoJS.enc.Hex);
+
+        // Save signature
+        bru.setGlobalEnvVar('Signature', signature);
+
+        console.log("getPortalAdminMerchantKey:", vkey);
+        console.log("getMerchantCode:", MerchantID);
+        console.log("DateRequest:", dateRequest);
+        console.log("getRefNo:", ReferenceNo);
+        console.log("getAmount:", TxnAmount);
+        console.log("plainTextReq:", str);
+        console.log("signature:", signature);
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

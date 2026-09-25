@@ -1,0 +1,310 @@
+info:
+  name: qr-mpm-generate
+  type: http
+  seq: 2
+
+http:
+  method: POST
+  url: https://snapqris.manjo.co.id/api/v1.0/qr/qr-mpm-generate
+  headers:
+    - name: Authorization
+      value: Bearer {{token}}
+      disabled: true
+    - name: X-TIMESTAMP
+      value: "{{X-TIMESTAMP}}"
+    - name: X-SIGNATURE
+      value: "{{signatureTransaction}}"
+    - name: X-PARTNER-ID
+      value: "{{mcCodePayId}}"
+    - name: X-EXTERNAL-ID
+      value: "{{X-EXTERNAL-ID}}"
+    - name: X-IP-ADDRESS
+      value: 172.24.281.24
+    - name: X-DEVICE-ID
+      value: 09864ADCASA
+      disabled: true
+    - name: X-LATITUDE
+      value: "-6.108841"
+      disabled: true
+    - name: X-LONGITUDE
+      value: "106.7782137"
+      disabled: true
+    - name: CHANNEL-ID
+      value: "05"
+    - name: ORIGIN
+      value: " www.hostname.com"
+  body:
+    type: json
+    data: |-
+      const crypto = require("crypto-js");
+
+      // ====================================================
+      // 1. LOAD BASE CONFIG
+      // ====================================================
+      // CORRECTED: Restored getCollectionVar so it reads from your UI settings
+      const clientKey = bru.getEnvVar("vkey"); 
+      const merchantId = bru.getEnvVar("merchantId"); 
+
+      // Token might be saved to the Environment by your Auth request, so we check both
+      let token = bru.getEnvVar("token") || bru.getVar("token") || "";
+      let accessToken = token.replace("Bearer ", "").trim();
+
+      // Guard clause to catch future missing keys
+      if (!clientKey) {
+          throw new Error("🚨 CRITICAL ERROR: 'vkey' is missing! Make sure it is in your Collection Variables.");
+      }
+      if (!merchantId) {
+          console.warn("⚠️ merchantId is missing!");
+      }
+
+      // ====================================================
+      // 2. GENERATE DYNAMIC VALUES (For your {{...}} UI tags)
+      // ====================================================
+      const ReferenceNo = [...Array(24)].map(() => Math.random().toString(36)[2]).join('').toUpperCase();
+      bru.setVar("partnerReferenceNo", ReferenceNo); 
+
+      const generateAlphanumeric = (n) => [...Array(n)].map(() => "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvxyz".charAt(Math.floor(Math.random() * 61))).join('');
+      const externalId = generateAlphanumeric(35);
+      bru.setVar("X-EXTERNAL-ID", externalId); 
+
+      const timestamp = new Date().toISOString().replace('Z','+07:00');
+      bru.setVar("X-TIMESTAMP", timestamp); 
+
+      // ====================================================
+      // 3. PREPARE THE BODY FOR HASHING
+      // ====================================================
+      let rawBody = req.getBody();
+      let bodyString = typeof rawBody === "string" ? rawBody : JSON.stringify(rawBody);
+
+      // Inject the variables into our temporary string
+      bodyString = bodyString.replace("{{partnerReferenceNo}}", ReferenceNo);
+      bodyString = bodyString.replace("{{merchantId}}", merchantId);
+
+      // Parse and re-stringify to minify it
+      const minifiedBody = JSON.stringify(JSON.parse(bodyString));
+
+      // ====================================================
+      // 4. CALCULATE SIGNATURE
+      // ====================================================
+      const bodyHash = crypto.SHA256(minifiedBody).toString(crypto.enc.Hex).toLowerCase();
+      const stringToSign = "POST:/v1.0/qr/qr-mpm-generate:" + accessToken + ":" + bodyHash + ":" + timestamp;
+      const signaturePayment = crypto.HmacSHA512(stringToSign, clientKey).toString(crypto.enc.Hex);
+
+      bru.setVar("signatureTransaction", signaturePayment); 
+
+      // ====================================================
+      // DEBUG LOGS
+      // ====================================================
+      console.log("========== SIGNATURE DEBUG ==========");
+      console.log("Minified Body:", minifiedBody);
+      console.log("StringToSign:", stringToSign);
+      console.log("Signature:", signaturePayment);
+      console.log("=====================================");
+  auth:
+    type: bearer
+    token: "{{token}}"
+
+runtime:
+  scripts:
+    - type: before-request
+      code: |-
+        // pm.environment.set("mcCodePayId", pm.collectionVariables.get("mcCodePayId"));
+        // pm.environment.set("merchantId", pm.collectionVariables.get("merchantId"));
+
+        const clientKey = bru.getEnvVar("vkey");
+        const merchantId = bru.getEnvVar("merchantId");
+
+        console.log("clientKey.. "+clientKey);
+        console.log("merchantId.. "+merchantId);
+
+        // SET TOKEN
+
+        let token = bru.getGlobalEnvVar("token");
+
+        if (!token) {
+            console.warn("Tidak ada token di environment!");
+        } else {
+            // jika token sudah disimpan tanpa prefix "Bearer ", tambahkan Bearer:
+            let value = token.startsWith("Bearer ") ? token : `Bearer ${token}`;
+
+            // upsert header Authorization
+            req.setHeader("Authorization", value);
+
+            console.log("Authorization header di-set:", value);
+        }
+
+
+        // ====================================================
+        // 🧩 1. Generate Reference No dan string concatenation (vkey)
+        // ====================================================
+
+        var vkey = bru.getEnvVar("vkey"); // vkey untuk concatenation
+
+        // Parse body JSON (default ke objek kosong jika tidak ada)
+        var data = req.getBody() ? JSON.parse(req.getBody().raw) : {};
+
+        // Generate random partnerReferenceNo
+        var ReferenceNo = "DIRECT-API-NMS-" + [...Array(10)].map(() => Math.random().toString(36)[2]).join('');
+        pm.collectionVariables.set('partnerReferenceNo', ReferenceNo);
+        bru.setEnvVar('partnerReferenceNo', ReferenceNo);
+
+        // Ambil field penting
+        var TxnAmount = data?.amount?.value || "0";
+        var Currency = data?.amount?.currency || "";
+        var MerchantID = data?.merchantId || "";
+
+        // Concatenate string sesuai logika Java
+        var str = vkey + MerchantID + ReferenceNo + TxnAmount + Currency;
+        console.log("Generated ReferenceNo:", ReferenceNo);
+        console.log("String before hashing:", str);
+
+        // Simpan ke collection variable
+        pm.collectionVariables.set('stringToHash', str);
+
+
+        // ===============================
+        // GENERATE SIGNATURE
+        // ===============================
+
+        /* Helper hashing */
+        function sha256(input) {
+            const crypto = require("crypto-js");
+            return crypto.SHA256(input).toString(crypto.enc.Hex).toLowerCase();
+        }
+        function hmac512(data, key) {
+            const crypto = require("crypto-js");
+            return crypto.HmacSHA512(data, key).toString(crypto.enc.Hex);
+        }
+
+        /* 1) optional: generate partnerReferenceNo (if you use variable in body) */
+        var ReferenceNo = "DIRECT-API-NMS-" + [...Array(10)].map(() => Math.random().toString(36)[2]).join('');
+        pm.collectionVariables.set('partnerReferenceNo', ReferenceNo);
+        console.log("Generated ReferenceNo:", ReferenceNo);
+
+        /* 2) headers / inputs */
+
+
+        var authHeader = req.headerList.get("Authorization") || "";
+
+        // ==========================
+        // GENERATE X-TIMESTAMP
+        // ==========================
+        const now = new Date();
+        const timestamp = now.toISOString().replace('Z','+07:00');
+        bru.setEnvVar("X-TIMESTAMP", timestamp);
+
+        if (!clientKey || !authHeader || !timestamp) {
+            console.warn("⚠️ Pastikan header X-PARTNER-ID, Authorization, X-TIMESTAMP sudah ada");
+        }
+        var accessToken = authHeader.startsWith("Bearer ") ? authHeader.replace("Bearer ", "").trim() : authHeader.trim();
+
+        var httpMethod = "POST";
+        var urlPath = "/v1.0/qr/qr-mpm-generate";
+
+        /* 3) get raw body template, then replace variables */
+        var rawTemplate = req.getBody() ? req.getBody().raw : "{}";
+
+        // Replace Postman variables like {{partnerReferenceNo}} with their values
+        // Use pm.variables.replaceIn to resolve collection/env/globals
+        var resolved = bru.interpolate(rawTemplate);
+
+        // 4) Minify like Jackson: parse (to ensure JSON valid) then stringify (minified)
+        var minifiedBody;
+        try {
+            var parsed = JSON.parse(resolved);
+            minifiedBody = JSON.stringify(parsed); // minified, preserves insertion order from resolved
+        } catch (e) {
+            // If JSON invalid, fallback: trim whitespace (less safe). But better to fail loudly.
+            console.error("Body JSON invalid after variable replacement:", e);
+            throw e; // stop — you should fix body JSON
+        }
+
+        // 5) compute hashes and signature
+        var bodyHash = sha256(minifiedBody);
+        var stringToSign = httpMethod + ":" + urlPath + ":" + accessToken + ":" + bodyHash + ":" + timestamp;
+        var signaturePayment = hmac512(stringToSign, clientKey);
+
+        // 6) Logging for verification (copy minifiedBody and compare with Java mapper.writeValueAsString(req))
+        console.log("========== SIGNATURE DEBUG ==========");
+        console.log("Resolved (resolved variables):", resolved);
+        console.log("MinifiedBody (to be hashed):", minifiedBody);
+        console.log("BodyHash (SHA256):", bodyHash);
+        console.log("StringToSign:", stringToSign);
+        console.log("SignaturePayment (HMAC512):", signaturePayment);
+        console.log("=====================================");
+
+        // 7. Generate Signature
+        pm.collectionVariables.set("signatureTransaction", signaturePayment);
+        // cek apakah sudah ada X-SIGNATURE di header
+        var existingSignature = req.headerList.get("X-SIGNATURE");
+
+        if (!existingSignature || existingSignature.trim() === "") {
+            // kalau kosong atau belum ada → isi "null"
+            req.deleteHeader("X-SIGNATURE");
+            req.setHeader("X-SIGNATURE", "null");
+            console.log("⚠️ X-SIGNATURE kosong, diisi null");
+        } else {
+            // kalau sudah ada value (tidak kosong) → tetap pakai yang sudah ada
+            console.log("⚠️ X-SIGNATURE sudah diisi manual di header, tidak di-override:", existingSignature);
+        }
+
+
+
+        // Fungsi generate string alphanumeric acak seperti di Java
+        function generateAlphanumeric(n) {
+            const AlphaNumericString = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvxyz";
+            let sb = "";
+
+            for (let i = 0; i < n; i++) {
+                const index = Math.floor(Math.random() * AlphaNumericString.length);
+                sb += AlphaNumericString.charAt(index);
+            }
+
+            return sb;
+        }
+
+        // Generate string dengan panjang 35
+        let randomString = generateAlphanumeric(35);
+        // Simpan ke environment variable Postman
+        bru.setEnvVar("X-EXTERNAL-ID", randomString);
+        // Tampilkan di console
+        console.log("Generated 35-char Alphanumeric:", randomString);
+    - type: after-response
+      code: |-
+        if (pm.response && JSON.stringify(res.getBody())) {
+            try {
+                let jsonData = res.getBody();
+
+                if (jsonData) {
+                    if (jsonData.referenceNo) {
+                        bru.setGlobalEnvVar("originalReferenceNo", jsonData.referenceNo);
+                        bru.setEnvVar("originalReferenceNo", jsonData.referenceNo)
+                        console.log("✅ referenceNo saved:", jsonData.referenceNo);
+                    } else {
+                        console.warn("⚠️ referenceNo not found in response:", jsonData);
+                    }
+
+                    if (jsonData.partnerReferenceNo) {
+                        bru.setGlobalEnvVar("originalPartnerReferenceNo", jsonData.partnerReferenceNo);
+                        bru.setEnvVar("originalPartnerReferenceNo", jsonData.partnerReferenceNo)
+                        console.log("✅ partnerReferenceNo saved:", jsonData.partnerReferenceNo);
+                    } else {
+                        console.warn("⚠️ partnerReferenceNo not found in response:", jsonData);
+                    }
+                } else {
+                    console.warn("⚠️ Empty JSON response.");
+                }
+
+            } catch (err) {
+                console.error("❌ Failed to parse JSON response:", err);
+            }
+        } else {
+            console.warn("⚠️ No response body to read.");
+        }
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true

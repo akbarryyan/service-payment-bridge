@@ -1,0 +1,120 @@
+info:
+  name: access-token
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: https://snapqris.manjo.co.id/api/v1.0/access-token/b2b
+  headers:
+    - name: X-CLIENT-KEY
+      value: "{{mcCodePayId}}"
+    - name: X-SIGNATURE
+      value: "{{signatureAccessToken}}"
+    - name: X-TIMESTAMP
+      value: "{{X-TIMESTAMP}}"
+  body:
+    type: json
+    data: "{\r
+
+      \  \"grantType\": \"client_credentials\"\r
+
+      }"
+
+runtime:
+  scripts:
+    - type: before-request
+      code: |-
+        // ==========================
+        // CONFIG — pull secrets from the active environment
+        // ==========================
+        const xClientKey = bru.getEnvVar("mcCodePayId");
+        const privateKeyRaw = bru.getEnvVar("privateKey");
+
+        if (!xClientKey) {
+          throw new Error("mcCodePayId is missing — check the active Bruno environment (top-right dropdown)");
+        }
+        if (!privateKeyRaw) {
+          throw new Error("privateKey is missing — check the active Bruno environment (top-right dropdown)");
+        }
+
+        const privateKeyBase64 = privateKeyRaw.replace(/\s+/g, "");
+
+        const privateKeyPem =
+          `-----BEGIN PRIVATE KEY-----\n${privateKeyBase64.match(/.{1,64}/g).join('\n')}\n-----END PRIVATE KEY-----`;
+
+        // ==========================
+        // X-TIMESTAMP — correct WIB (UTC+7) conversion
+        // (the old `.replace('Z','+07:00')` trick relabels a UTC time as if it
+        //  were WIB without actually shifting the clock — this fixes that)
+        // ==========================
+        function toJakartaISOString(date) {
+          const offsetMs = 7 * 60 * 60 * 1000; // WIB = UTC+7
+          const shifted = new Date(date.getTime() + offsetMs);
+          const pad = (n, len = 2) => String(n).padStart(len, '0');
+
+          const yyyy = shifted.getUTCFullYear();
+          const MM = pad(shifted.getUTCMonth() + 1);
+          const dd = pad(shifted.getUTCDate());
+          const hh = pad(shifted.getUTCHours());
+          const mm = pad(shifted.getUTCMinutes());
+          const ss = pad(shifted.getUTCSeconds());
+          const ms = pad(shifted.getUTCMilliseconds(), 3);
+
+          return `${yyyy}-${MM}-${dd}T${hh}:${mm}:${ss}.${ms}+07:00`;
+        }
+
+        const xTimestamp = toJakartaISOString(new Date());
+
+        // ==========================
+        // SIGN: RSA-SHA256 over "clientKey|timestamp"
+        // ==========================
+        const crypto = require('crypto');
+
+        const message = `${xClientKey}|${xTimestamp}`;
+
+        const sign = crypto.createSign('RSA-SHA256');
+        sign.update(message);
+        sign.end();
+        const signatureHex = sign.sign(privateKeyPem, 'hex');
+
+        req.setHeader('X-CLIENT-KEY', xClientKey);
+        req.setHeader('X-TIMESTAMP', xTimestamp);
+        req.setHeader('X-SIGNATURE', signatureHex);
+
+        bru.setEnvVar("X-TIMESTAMP", xTimestamp);
+        bru.setEnvVar("signatureAccessToken", signatureHex);
+
+        // ==========================
+        // DEBUG LOGS
+        // ==========================
+        console.log("safe mode?", bru.isSafeMode());
+        console.log("client key:", xClientKey);
+        console.log("message signed:", message);
+        console.log("X-TIMESTAMP:", xTimestamp);
+        console.log("X-SIGNATURE:", signatureHex);
+    - type: after-response
+      code: |-
+        if (pm.response && JSON.stringify(res.getBody())) {
+            try {
+                let jsonData = res.getBody();
+
+                if (jsonData && jsonData.accessToken) {
+                    bru.setGlobalEnvVar("token", jsonData.accessToken);
+                    console.log("✅ Access token save:", jsonData.accessToken);
+                } else {
+                    console.warn("accessToken not found in response:", jsonData);
+                }
+            } catch (err) {
+                console.error("fail parse JSON response:", err);
+            }
+        } else {
+            console.warn("no response body cant read");
+        }
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: true
