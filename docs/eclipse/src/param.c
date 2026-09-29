@@ -41,8 +41,8 @@ static void readSN(char *sn)
 // cabang initParam supaya nilainya sama apakah berkas tersimpan ada atau tidak.
 static void applyMqttParam(void)
 {
-	strcpy(G_sys_param.mqtt_server, "10.42.0.1"); // lokal (laptop dev, hotspot dari laptop sendiri via nmcli) -- ganti balik ke "uat-mqtt-dashboard.manjo.co.id" untuk lawan Manjo asli, atau update IP ini kalau ganti jaringan lagi
-	strcpy(G_sys_param.mqtt_port,   "1883");
+	strcpy(G_sys_param.mqtt_server, "192.168.137.1"); // lokal (laptop dev) -- ganti balik ke "uat-mqtt-dashboard.manjo.co.id" untuk lawan Manjo asli, atau update IP ini kalau laptop pindah/ganti hotspot
+	strcpy(G_sys_param.mqtt_port,   "11883");
 	G_sys_param.mqtt_ssl = 0;
 
 	// Topic mengikuti merchant, bukan serial number -- lihat MQTT_MERCHANT_ID di def.h.

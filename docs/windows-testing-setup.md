@@ -17,9 +17,9 @@
    ```
    Cari adapter bernama **"Local Area Connection* X"** atau **"Microsoft Wi-Fi Direct Virtual Adapter"**. IP default biasanya `192.168.137.1` — catat nilai persisnya.
 
-## 2. Pindahkan Project ke WSL2
+## 2. (Opsional) Pindahkan Project ke WSL2
 
-Salin **seluruh folder project** `service-payment-bridge/` (bukan cuma `docs/eclipse/`) ke dalam filesystem WSL2 sendiri — contoh path: `~/service-payment-bridge` di home directory distro WSL2-mu.
+Project juga bisa dijalankan langsung dari Windows (Git Bash/PowerShell + Docker Desktop), dan setup itulah yang sudah terbukti jalan dengan device fisik. Lihat `docs/running-locally.md`. Kalau lebih suka WSL2, salin **seluruh folder project** `service-payment-bridge/` ke filesystem WSL2 sendiri (mis. `~/service-payment-bridge`).
 
 > **Kenapa di dalam WSL2, bukan di `/mnt/c/...`?** Docker & I/O jauh lebih cepat kalau project ada di filesystem native WSL2, bukan di mount Windows.
 
@@ -48,7 +48,7 @@ export DATABASE_URL="postgres://payment_bridge:payment_bridge@localhost:15432/pa
 migrate -path migrations -database "$DATABASE_URL" up
 ```
 
-Expected: migration `1` sampai `11` berhasil (`.../u ...`), tanpa error.
+Expected: semua migration di folder `migrations/` berhasil (`.../u ...`), tanpa error. Detailnya di `docs/running-locally.md` Section 4.
 
 ## 5. Izinkan Windows Firewall
 
@@ -62,13 +62,16 @@ netsh advfirewall firewall add rule name="MQTT-11883" dir=in action=allow protoc
 
 ## 6. Update Firmware & Build Ulang
 
-Buka `docs/eclipse/src/param.c`, ganti baris:
+Source firmware yang di-build ada di `C:\Users\Hi\eclipse-workspace\Q161ProSoundbox` (`docs/eclipse/` di repo ini cuma salinan untuk referensi). Buka `src/param.c` di sana, fungsi `applyMqttParam()`, pastikan dua baris ini:
 
 ```c
-strcpy(G_sys_param.mqtt_server, "<IP-hotspot-Windows-dari-Step-1>");
+strcpy(G_sys_param.mqtt_server, "<IP-hotspot-Windows-dari-Step-1>"); // biasanya 192.168.137.1
+strcpy(G_sys_param.mqtt_port,   "11883");
 ```
 
-Build project di Eclipse (Windows), lalu flash ke Q161 Pro seperti biasa.
+> **Port harus `11883`, bukan `1883`.** `docker-compose.yml` hanya mem-publish Mosquitto ke host lewat `11883` (`"11883:1883"`). Kalau firmware tetap di `1883`, koneksi device ditolak sebelum sampai ke broker, dan di `docker compose logs mosquitto` tidak akan muncul apa-apa sama sekali.
+
+Build project di Eclipse (Windows), lalu flash ke Q161 Pro seperti biasa. Setelah itu salin juga `param.c` yang baru ke `docs/eclipse/src/` supaya referensi di repo tetap sama dengan yang ter-flash.
 
 ## 7. Sambungkan Q161 Pro ke Hotspot Windows
 
@@ -76,13 +79,11 @@ Di device: WiFi setup → pilih SSID hotspot Windows yang baru dibuat di Step 1,
 
 ## 8. Verifikasi
 
-Karena semua ini jalan di Windows (di luar jangkauan tool Claude Code yang berjalan di sesi Linux), verifikasi konektivitas perlu dilakukan manual:
-
-- **Cek broker menerima koneksi** — dari terminal WSL2:
+- **Cek broker menerima koneksi:**
   ```bash
   docker compose logs mosquitto --since 5m
   ```
-  Cari baris `New client connected ... as clientId-<SN>` dari IP di range hotspot Windows (`192.168.137.x`).
+  Cari baris `New client connected ... as clientId-<SN> (p4, c0, k60)`. IP sumbernya akan tampil sebagai gateway Docker (mis. `172.19.0.1`), bukan `192.168.137.x`. Itu normal karena koneksi lewat port-forward Docker Desktop.
 
 - **Cek traffic mentah** (opsional, untuk debug manual) — install `mosquitto-clients` di WSL2 kalau belum ada (`sudo apt install mosquitto-clients`), lalu:
   ```bash
@@ -92,13 +93,16 @@ Karena semua ini jalan di Windows (di luar jangkauan tool Claude Code yang berja
 
 ## 9. Kalau Ada Kendala
 
-Kirim ke Claude Code (sesi ini masih di Linux, tapi bisa bantu diagnosa dari hasil yang kamu kirim):
+Kumpulkan ini untuk diagnosa:
 - Output `docker compose logs mosquitto --since 5m`
+- Log backend (terminal tempat `go run ./cmd/server` jalan). Setiap kegagalan generate QR tercatat sebagai `"generate QR failed"` lengkap dengan `error_code` dan `cause`.
 - Output `ipconfig` (bagian adapter hotspot)
 - Apa yang tampil di layar Q161 Pro
+- Isi `transactions`, `mqtt_messages`, `manjo_api_logs` terbaru (query-nya ada di `docs/running-locally.md` Section 6)
 
 ---
 
 **Referensi terkait:**
+- `docs/running-locally.md` — cara menjalankan service, migration, dan test.
 - `docs/eclipse/src/mqtt.c`, `src/param.c`, `inc/def.h` — kontrak MQTT firmware asli.
-- `docs/superpowers/specs/2026-09-25-mqtt-contract-reconciliation-design.md` — desain rekonsiliasi kontrak MQTT (backend belum diimplementasikan mengikuti kontrak ini, itu langkah setelah testing konektivitas dasar berhasil).
+- `docs/superpowers/specs/2026-09-25-mqtt-contract-reconciliation-design.md` — desain rekonsiliasi kontrak MQTT (sudah diimplementasikan dan terverifikasi dengan device fisik).
