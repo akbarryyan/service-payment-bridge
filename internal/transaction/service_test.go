@@ -77,7 +77,9 @@ func setupService(t *testing.T, manjoBaseURL string) (*Service, *sqlc.Queries, r
 	if err != nil {
 		t.Fatalf("failed to insert test device: %v", err)
 	}
+	testStart := time.Now()
 	t.Cleanup(func() {
+		deleteMockAccessTokenLogs(pool, testStart)
 		pool.Exec(context.Background(), `DELETE FROM manjo_api_logs WHERE transaction_id IN (SELECT transaction_id FROM transactions WHERE merchant_id = $1)`, merchantID)
 		pool.Exec(context.Background(), `DELETE FROM transactions WHERE merchant_id = $1`, merchantID)
 		pool.Exec(context.Background(), `DELETE FROM devices WHERE device_id = $1`, deviceID)
@@ -94,6 +96,16 @@ func setupService(t *testing.T, manjoBaseURL string) (*Service, *sqlc.Queries, r
 	svc := NewServiceWithBaseURL(q, registry, secrets.EnvProvider{}, manjoBaseURL)
 
 	return svc, q, *device, pool
+}
+
+// deleteMockAccessTokenLogs removes ACCESS_TOKEN rows written by tests. They
+// have no transaction_id to clean up by; mock token responses leave
+// responseCode empty, which real Manjo responses never do.
+func deleteMockAccessTokenLogs(pool *pgxpool.Pool, since time.Time) {
+	pool.Exec(context.Background(), `
+		DELETE FROM manjo_api_logs
+		WHERE operation = 'ACCESS_TOKEN' AND transaction_id IS NULL
+		  AND created_at >= $1 AND coalesce(response_body->>'responseCode', '') = ''`, since)
 }
 
 func TestGenerateQR_Success(t *testing.T) {

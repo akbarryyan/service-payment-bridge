@@ -54,7 +54,9 @@ func TestGenerateQRFlow_EndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to connect to test database: %v", err)
 	}
-	defer pool.Close()
+	// t.Cleanup, not defer: cleanups run LIFO after the test body, so the
+	// pool must still be open for the data cleanup registered below.
+	t.Cleanup(pool.Close)
 	q := sqlc.New(pool)
 
 	merchantID := "E2E-TEST-MERCHANT"
@@ -78,8 +80,11 @@ func TestGenerateQRFlow_EndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to seed device: %v", err)
 	}
+	testStart := time.Now()
 	t.Cleanup(func() {
-		pool.Exec(context.Background(), `DELETE FROM mqtt_messages WHERE topic IN ($1, $2)`, qrtopic.RequestTopic, replyTopic)
+		// Only this test's rows: qris/request is shared with real devices.
+		pool.Exec(context.Background(), `DELETE FROM mqtt_messages WHERE topic = $1 OR (topic = $2 AND payload LIKE $3)`, replyTopic, qrtopic.RequestTopic, deviceID+"|%")
+		pool.Exec(context.Background(), `DELETE FROM manjo_api_logs WHERE operation = 'ACCESS_TOKEN' AND transaction_id IS NULL AND created_at >= $1 AND coalesce(response_body->>'responseCode', '') = ''`, testStart)
 		pool.Exec(context.Background(), `DELETE FROM manjo_api_logs WHERE transaction_id IN (SELECT transaction_id FROM transactions WHERE merchant_id = $1)`, merchantID)
 		pool.Exec(context.Background(), `DELETE FROM transactions WHERE merchant_id = $1`, merchantID)
 		pool.Exec(context.Background(), `DELETE FROM devices WHERE device_id = $1`, deviceID)
