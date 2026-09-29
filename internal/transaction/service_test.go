@@ -8,8 +8,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -170,6 +173,31 @@ func TestGenerateQR_Conflict409_MarksFailed(t *testing.T) {
 	}
 	if result.Status != "FAILED" || result.ErrorCode != "CONFLICT" {
 		t.Errorf("Status/ErrorCode = %s/%s, want FAILED/CONFLICT", result.Status, result.ErrorCode)
+	}
+	var apiErr *manjoclient.APIError
+	if !errors.As(result.Cause, &apiErr) || apiErr.StatusCode != http.StatusConflict {
+		t.Errorf("Cause = %v, want *manjoclient.APIError with StatusCode 409", result.Cause)
+	}
+}
+
+func TestGenerateQR_UnresolvableSecret_ReportsConfigErrorCause(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("Manjo must not be called when config cannot be built, got %s", r.URL.Path)
+	}))
+	defer server.Close()
+
+	svc, _, device, _ := setupService(t, server.URL)
+	os.Unsetenv(device.ManjoClientSecretRef)
+
+	result, err := svc.GenerateQR(context.Background(), device, 50000)
+	if err != nil {
+		t.Fatalf("GenerateQR() error = %v", err)
+	}
+	if result.Status != "FAILED" || result.ErrorCode != "CONFIG_ERROR" {
+		t.Errorf("Status/ErrorCode = %s/%s, want FAILED/CONFIG_ERROR", result.Status, result.ErrorCode)
+	}
+	if result.Cause == nil || !strings.Contains(result.Cause.Error(), device.ManjoClientSecretRef) {
+		t.Errorf("Cause = %v, want an error naming %q", result.Cause, device.ManjoClientSecretRef)
 	}
 }
 

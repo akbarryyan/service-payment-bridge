@@ -49,6 +49,7 @@ type GenerateQRResult struct {
 	QRISPayload   string
 	ExpireAt      time.Time
 	ErrorCode     string // populated when Status == "FAILED"
+	Cause         error  // underlying error when Status == "FAILED", for logging only
 }
 
 func (s *Service) GenerateQR(ctx context.Context, device resolver.ResolvedDevice, amount int64) (*GenerateQRResult, error) {
@@ -62,18 +63,18 @@ func (s *Service) GenerateQR(ctx context.Context, device resolver.ResolvedDevice
 	})
 	if err != nil {
 		_ = s.markFailed(ctx, transactionID)
-		return &GenerateQRResult{TransactionID: transactionID, Status: "FAILED", ErrorCode: "CONFIG_ERROR"}, nil
+		return &GenerateQRResult{TransactionID: transactionID, Status: "FAILED", ErrorCode: "CONFIG_ERROR", Cause: err}, nil
 	}
 
 	req := buildGenerateQRRequest(device, transactionID, amount)
 
 	start := s.now()
-	resp, externalID, errCode := s.callGenerateQRWithRetry(ctx, client, req)
+	resp, externalID, errCode, callErr := s.callGenerateQRWithRetry(ctx, client, req)
 	s.logManjoAPICall(ctx, transactionID, req, resp, errCode, s.now().Sub(start))
 
 	if errCode != "" {
 		_ = s.markFailed(ctx, transactionID)
-		return &GenerateQRResult{TransactionID: transactionID, Status: "FAILED", ErrorCode: errCode}, nil
+		return &GenerateQRResult{TransactionID: transactionID, Status: "FAILED", ErrorCode: errCode, Cause: callErr}, nil
 	}
 
 	expireAt, err := parseExpireDate(resp.AdditionalInfo.ExpireDate, s.now())
@@ -207,36 +208,37 @@ func buildGenerateQRRequest(device resolver.ResolvedDevice, transactionID string
 // callGenerateQRWithRetry implements architecture.md Section 13.1: 401 ->
 // invalidate cached token, retry once; 400/404/409 -> no retry, fail
 // immediately; timeout/5xx/network error -> retry up to maxTransientRetries
-// total attempts.
-func (s *Service) callGenerateQRWithRetry(ctx context.Context, client *manjoclient.Client, req manjoclient.GenerateQRRequest) (*manjoclient.GenerateQRResponse, string, string) {
+// total attempts. The last error is returned alongside the error code so
+// callers can log what actually went wrong.
+func (s *Service) callGenerateQRWithRetry(ctx context.Context, client *manjoclient.Client, req manjoclient.GenerateQRRequest) (*manjoclient.GenerateQRResponse, string, string, error) {
 	resp, externalID, err := client.GenerateQR(ctx, req)
 	if err == nil {
-		return resp, externalID, ""
+		return resp, externalID, "", nil
 	}
 
 	if isUnauthorized(err) {
 		client.InvalidateToken()
 		resp, externalID, err = client.GenerateQR(ctx, req)
 		if err == nil {
-			return resp, externalID, ""
+			return resp, externalID, "", nil
 		}
 	}
 
 	if code := nonRetryableCode(err); code != "" {
-		return nil, externalID, code
+		return nil, externalID, code, err
 	}
 
 	for attempt := 1; attempt < maxTransientRetries; attempt++ {
 		resp, externalID, err = client.GenerateQR(ctx, req)
 		if err == nil {
-			return resp, externalID, ""
+			return resp, externalID, "", nil
 		}
 		if code := nonRetryableCode(err); code != "" {
-			return nil, externalID, code
+			return nil, externalID, code, err
 		}
 	}
 
-	return nil, externalID, "MANJO_TIMEOUT"
+	return nil, externalID, "MANJO_TIMEOUT", err
 }
 
 func isUnauthorized(err error) bool {

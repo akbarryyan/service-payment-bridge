@@ -147,6 +147,7 @@ func newGenerateQRHandler(logger *slog.Logger, q *sqlc.Queries, deviceResolver *
 		logMQTTMessage(ctx, q, logger, topicStr, payload, sqlc.MqttDirectionINBOUND, sqlc.MqttMessageStatusPROCESSED, result.TransactionID, "")
 
 		if result.Status != "SUCCESS" {
+			logger.Warn("generate QR failed", "transaction_id", result.TransactionID, "device_id", device.DeviceID, "error_code", result.ErrorCode, "cause", result.Cause)
 			publishFailureReply(ctx, q, logger, mqttClient, replyTopic, result.TransactionID)
 			return
 		}
