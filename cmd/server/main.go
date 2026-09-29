@@ -39,6 +39,13 @@ func main() {
 		logger.Error("failed to load .env", "error", err)
 		os.Exit(1)
 	}
+	// .env.sandbox holds the sandbox merchant's Manjo credential refs
+	// (merchants.manjo_private_key_ref / manjo_client_secret_ref point at
+	// these var names) — load it too so secrets.EnvProvider can resolve them.
+	if err := godotenv.Load(".env.sandbox"); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		logger.Error("failed to load .env.sandbox", "error", err)
+		os.Exit(1)
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
