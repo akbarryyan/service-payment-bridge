@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -148,6 +149,54 @@ func TestGenerateQR_Success(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected at least one manjo_api_logs row for this transaction, found none")
+	}
+}
+
+func TestGenerateQR_LogsAccessTokenCallWithoutToken(t *testing.T) {
+	marker := fmt.Sprintf("TXSVC-TOKEN-LOG-%d", time.Now().UnixNano())
+	const token = "txsvc-secret-access-token"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1.0/access-token/b2b":
+			json.NewEncoder(w).Encode(manjoclient.AccessTokenResponse{
+				ResponseCode: "2007300", ResponseMessage: marker,
+				TokenType: "Bearer", AccessToken: token, ExpiresIn: "900",
+			})
+		case "/v1.0/qr/qr-mpm-generate":
+			json.NewEncoder(w).Encode(manjoclient.GenerateQRResponse{
+				ReferenceNo: "A0000003", QRContent: "00020101...",
+				AdditionalInfo: manjoclient.GenerateQRResponseAdditionalInfo{
+					ExpireDate: time.Now().Add(time.Hour).Format("20060102150405"),
+				},
+			})
+		}
+	}))
+	defer server.Close()
+
+	svc, _, device, pool := setupService(t, server.URL)
+	t.Cleanup(func() {
+		pool.Exec(context.Background(), `DELETE FROM manjo_api_logs WHERE response_body->>'responseMessage' = $1`, marker)
+	})
+
+	if _, err := svc.GenerateQR(context.Background(), device, 50000); err != nil {
+		t.Fatalf("GenerateQR() error = %v", err)
+	}
+
+	var operation, endpoint, body string
+	var httpStatus int
+	err := pool.QueryRow(context.Background(), `
+		SELECT operation, endpoint, http_status, response_body::text
+		FROM manjo_api_logs WHERE response_body->>'responseMessage' = $1`, marker).
+		Scan(&operation, &endpoint, &httpStatus, &body)
+	if err != nil {
+		t.Fatalf("expected one ACCESS_TOKEN manjo_api_logs row, query error = %v", err)
+	}
+	if operation != "ACCESS_TOKEN" || endpoint != "/v1.0/access-token/b2b" || httpStatus != 200 {
+		t.Errorf("row = %s %s %d, want ACCESS_TOKEN /v1.0/access-token/b2b 200", operation, endpoint, httpStatus)
+	}
+	if strings.Contains(body, token) {
+		t.Errorf("response_body leaks the access token: %s", body)
 	}
 }
 

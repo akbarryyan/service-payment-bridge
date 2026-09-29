@@ -9,6 +9,7 @@ import (
 	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -57,6 +58,61 @@ func TestAccessToken_Success(t *testing.T) {
 	}
 	if expiresIn.Seconds() != 900 {
 		t.Errorf("expiresIn = %v, want 900s", expiresIn)
+	}
+}
+
+func TestAccessToken_ReportsSuccessToHookWithMaskedToken(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(AccessTokenResponse{
+			ResponseCode: "2007300", TokenType: "Bearer", AccessToken: "secret-token-value", ExpiresIn: "900",
+		})
+	}))
+	defer server.Close()
+
+	var calls []AccessTokenCall
+	cfg := testConfig(t, server.URL)
+	cfg.OnAccessToken = func(_ context.Context, call AccessTokenCall) { calls = append(calls, call) }
+
+	if _, _, err := New(cfg).AccessToken(context.Background()); err != nil {
+		t.Fatalf("AccessToken() error = %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("hook called %d times, want 1", len(calls))
+	}
+	call := calls[0]
+	if call.StatusCode != http.StatusOK || call.Err != nil {
+		t.Errorf("StatusCode/Err = %d/%v, want 200/nil", call.StatusCode, call.Err)
+	}
+	if strings.Contains(string(call.ResponseBody), "secret-token-value") {
+		t.Errorf("ResponseBody leaks the access token: %s", call.ResponseBody)
+	}
+	if !strings.Contains(string(call.ResponseBody), "2007300") {
+		t.Errorf("ResponseBody = %s, want it to keep non-secret fields like responseCode", call.ResponseBody)
+	}
+}
+
+func TestAccessToken_ReportsFailureToHook(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"responseCode":"4017300"}`))
+	}))
+	defer server.Close()
+
+	var calls []AccessTokenCall
+	cfg := testConfig(t, server.URL)
+	cfg.OnAccessToken = func(_ context.Context, call AccessTokenCall) { calls = append(calls, call) }
+
+	if _, _, err := New(cfg).AccessToken(context.Background()); err == nil {
+		t.Fatal("AccessToken() expected error, got nil")
+	}
+	if len(calls) != 1 {
+		t.Fatalf("hook called %d times, want 1", len(calls))
+	}
+	if calls[0].StatusCode != http.StatusUnauthorized || calls[0].Err == nil {
+		t.Errorf("StatusCode/Err = %d/%v, want 401/non-nil", calls[0].StatusCode, calls[0].Err)
+	}
+	if string(calls[0].ResponseBody) != `{"responseCode":"4017300"}` {
+		t.Errorf("ResponseBody = %s, want the raw error body", calls[0].ResponseBody)
 	}
 }
 

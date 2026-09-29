@@ -1,8 +1,10 @@
 package manjoclient
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"time"
 )
 
 type Config struct {
@@ -13,6 +15,19 @@ type Config struct {
 	PartnerID     string // X-PARTNER-ID
 	ChannelID     string // CHANNEL-ID
 	HTTPClient    *http.Client
+
+	// OnAccessToken, if set, is called after every access-token request
+	// (success or failure), e.g. to persist it to manjo_api_logs.
+	OnAccessToken func(ctx context.Context, call AccessTokenCall)
+}
+
+// AccessTokenCall describes one POST /v1.0/access-token/b2b attempt.
+// ResponseBody never contains the access token itself (it is masked).
+type AccessTokenCall struct {
+	StatusCode   int // 0 when no HTTP response was received
+	ResponseBody []byte
+	Duration     time.Duration
+	Err          error
 }
 
 type Amount struct {

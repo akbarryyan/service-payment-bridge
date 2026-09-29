@@ -178,7 +178,38 @@ func (s *Service) buildManjoConfig(ctx context.Context, device resolver.Resolved
 		ClientSecret:  clientSecret,
 		PartnerID:     device.ManjoMerchantID,
 		ChannelID:     device.ManjoChannelID,
+		OnAccessToken: s.logAccessTokenCall,
 	}, nil
+}
+
+// logAccessTokenCall records every access-token attempt (process-flow.md
+// Flow 2 steps 3-4). transaction_id stays NULL: a cached token serves many
+// transactions, so it is not tied to the one that triggered the fetch.
+func (s *Service) logAccessTokenCall(ctx context.Context, call manjoclient.AccessTokenCall) {
+	respBody := call.ResponseBody
+	if !json.Valid(respBody) {
+		respBody = nil
+		if call.Err != nil {
+			respBody, _ = json.Marshal(map[string]string{"error": call.Err.Error()})
+		}
+	}
+
+	httpStatus := pgtype.Int4{}
+	if call.StatusCode != 0 {
+		httpStatus = pgtype.Int4{Int32: int32(call.StatusCode), Valid: true}
+	}
+
+	// Logging failure must not break the Generate QR flow (same trade-off
+	// as logManjoAPICall).
+	_, _ = s.q.LogManjoAPICall(ctx, sqlc.LogManjoAPICallParams{
+		Direction:    sqlc.ManjoApiDirectionOUTBOUND,
+		Operation:    sqlc.ManjoApiOperationACCESSTOKEN,
+		Endpoint:     "/v1.0/access-token/b2b",
+		HttpStatus:   httpStatus,
+		RequestBody:  []byte(`{"grantType":"client_credentials"}`),
+		ResponseBody: respBody,
+		DurationMs:   pgtype.Int4{Int32: int32(call.Duration.Milliseconds()), Valid: true},
+	})
 }
 
 func buildGenerateQRRequest(device resolver.ResolvedDevice, transactionID string, amount int64) manjoclient.GenerateQRRequest {

@@ -42,17 +42,33 @@ func (c *Client) fetchAccessToken(ctx context.Context) (string, time.Duration, e
 // AccessToken calls POST /v1.0/access-token/b2b directly, bypassing the
 // cache. Normally reached indirectly via GenerateQR through TokenManager.
 func (c *Client) AccessToken(ctx context.Context) (string, time.Duration, error) {
+	start := time.Now()
+	token, expiresIn, statusCode, maskedBody, err := c.requestAccessToken(ctx)
+	if c.cfg.OnAccessToken != nil {
+		c.cfg.OnAccessToken(ctx, AccessTokenCall{
+			StatusCode:   statusCode,
+			ResponseBody: maskedBody,
+			Duration:     time.Since(start),
+			Err:          err,
+		})
+	}
+	return token, expiresIn, err
+}
+
+// requestAccessToken returns the HTTP status (0 if none) and the response
+// body with the access token masked, alongside the usual results.
+func (c *Client) requestAccessToken(ctx context.Context) (string, time.Duration, int, []byte, error) {
 	timestamp := NowJakarta()
 	signature, err := SignAccessToken(c.cfg.PrivateKeyPEM, c.cfg.ClientKey, timestamp)
 	if err != nil {
-		return "", 0, err
+		return "", 0, 0, nil, err
 	}
 
 	body := []byte(`{"grantType":"client_credentials"}`)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.BaseURL+"/v1.0/access-token/b2b", bytes.NewReader(body))
 	if err != nil {
-		return "", 0, err
+		return "", 0, 0, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-TIMESTAMP", timestamp)
@@ -61,30 +77,35 @@ func (c *Client) AccessToken(ctx context.Context) (string, time.Duration, error)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return "", 0, fmt.Errorf("manjoclient: access token request failed: %w", err)
+		return "", 0, 0, nil, fmt.Errorf("manjoclient: access token request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return "", 0, fmt.Errorf("manjoclient: failed to read access token response: %w", err)
+		return "", 0, resp.StatusCode, nil, fmt.Errorf("manjoclient: failed to read access token response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return "", 0, &APIError{StatusCode: resp.StatusCode, Body: string(respBody)}
+		return "", 0, resp.StatusCode, respBody, &APIError{StatusCode: resp.StatusCode, Body: string(respBody)}
 	}
 
 	var tokenResp AccessTokenResponse
 	if err := json.Unmarshal(respBody, &tokenResp); err != nil {
-		return "", 0, fmt.Errorf("manjoclient: failed to parse access token response: %w", err)
+		// Unparseable 200 body may still hold a token; don't pass it on.
+		return "", 0, resp.StatusCode, nil, fmt.Errorf("manjoclient: failed to parse access token response: %w", err)
 	}
+
+	masked := tokenResp
+	masked.AccessToken = "***"
+	maskedBody, _ := json.Marshal(masked)
 
 	var expiresInSeconds int
 	if _, err := fmt.Sscanf(tokenResp.ExpiresIn, "%d", &expiresInSeconds); err != nil {
-		return "", 0, fmt.Errorf("manjoclient: invalid expiresIn %q: %w", tokenResp.ExpiresIn, err)
+		return "", 0, resp.StatusCode, maskedBody, fmt.Errorf("manjoclient: invalid expiresIn %q: %w", tokenResp.ExpiresIn, err)
 	}
 
-	return tokenResp.AccessToken, time.Duration(expiresInSeconds) * time.Second, nil
+	return tokenResp.AccessToken, time.Duration(expiresInSeconds) * time.Second, resp.StatusCode, maskedBody, nil
 }
 
 // GenerateQR calls POST /v1.0/qr/qr-mpm-generate, obtaining a valid access
