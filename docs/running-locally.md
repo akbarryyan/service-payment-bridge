@@ -131,6 +131,7 @@ Biarkan terminal ini terbuka. Service berjalan selama terminal hidup, dan `Ctrl+
 | `"device resolve failed"` | `device_id` dari device tidak ada di tabel `devices`, atau device/merchant/tenant `INACTIVE` |
 | `"invalid GENERATE_QR payload"` | Payload dari device tidak sesuai format `"{device_id}\|{amount_sen}"` |
 | `"payment detected"` | Poller menemukan transaksi yang sudah dibayar (`status` → `PAID`), lalu mengirim pengumuman audio ke device |
+| `"stale payment not announced"` | Transaksi baru menjadi `PAID` lewat dari 10 menit yang lalu (`paid_at`) saat pertama kali diklaim — misalnya sesudah backfill migration atau restart setelah downtime. Status tetap berubah jadi `PAID`, tapi soundbox **tidak** dibunyikan supaya tidak menyebutkan nominal yang sudah basi |
 | `"announcement failed"` | Pengumuman audio gagal dikirim ke broker setelah 3 percobaan. Transaksi tetap `PAID` |
 | `"transaction expired"` | QR kedaluwarsa. `via: "manjo"` = dijawab Manjo, `via: "deadline"` = jaring pengaman (2 menit lewat `expire_at`) |
 | `"payment query failed"` | Query status ke Manjo gagal atau jawabannya tidak dikenal. Otomatis dicoba lagi 3 detik kemudian |

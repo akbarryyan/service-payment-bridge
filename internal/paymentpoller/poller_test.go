@@ -36,8 +36,22 @@ const (
 	testMerchantID  = "POLL-TEST-MERCHANT"
 	testDeviceID    = "POLL-TEST-DEVICE"
 	rp50000Payload  = "/ext/awal-qris.mp3+/ext/lima.mp3+/ext/puluh.mp3+/ext/ribu.mp3+/ext/akhir-berhasil.mp3"
-	paidAnswer      = `{"responseCode":"2005100","latestTransactionStatus":"00","paidTime":"2026-09-30T10:57:53+07:00","amount":{"value":"50000.00","currency":"IDR"}}`
 )
+
+// paidAnswerAt builds a qr-mpm-query "00" success body with the given paidTime, so tests
+// can control how old the payment looks without depending on a fixed clock. The default
+// mock answer (below) always uses time.Now(), since a fixed past paidTime would make the
+// stale-payment guard (F2) skip every test's announcement.
+func paidAnswerAt(paidTime time.Time) string {
+	return fmt.Sprintf(`{"responseCode":"2005100","latestTransactionStatus":"00","paidTime":"%s","amount":{"value":"50000.00","currency":"IDR"}}`,
+		paidTime.Format(time.RFC3339))
+}
+
+// mockAnswer is one canned qr-mpm-query response: HTTP status plus body.
+type mockAnswer struct {
+	status int
+	body   string
+}
 
 type fixture struct {
 	pool       *pgxpool.Pool
@@ -46,6 +60,17 @@ type fixture struct {
 	queryCalls *atomic.Int32
 	messages   chan string
 	publisher  *mqttclient.Client
+
+	mu     sync.Mutex
+	answer *mockAnswer // nil = default: HTTP 200, PAID with paidTime = now
+}
+
+// setAnswer overrides qr-mpm-query's response for the rest of this test. Safe to call
+// before the poller runs; the mock handler reads it under the same mutex.
+func (f *fixture) setAnswer(status int, body string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.answer = &mockAnswer{status: status, body: body}
 }
 
 func setup(t *testing.T) *fixture {
@@ -85,7 +110,14 @@ func setup(t *testing.T) *fixture {
 			json.NewEncoder(w).Encode(manjoclient.AccessTokenResponse{TokenType: "Bearer", AccessToken: "test-token", ExpiresIn: "900"})
 		case "/v1.0/qr/qr-mpm-query":
 			f.queryCalls.Add(1)
-			w.Write([]byte(paidAnswer))
+			f.mu.Lock()
+			a := f.answer
+			f.mu.Unlock()
+			if a == nil {
+				a = &mockAnswer{status: http.StatusOK, body: paidAnswerAt(time.Now())}
+			}
+			w.WriteHeader(a.status)
+			w.Write([]byte(a.body))
 		}
 	}))
 	t.Cleanup(manjo.Close)
@@ -251,5 +283,25 @@ func TestRunOnce_NullNextQueryAtIsClaimedAndAnnounced(t *testing.T) {
 	}
 	if s := f.status(t, txID); s != sqlc.TransactionStatusPAID {
 		t.Errorf("status = %s, want PAID", s)
+	}
+}
+
+// F2: a payment that was actually already made long ago (e.g. discovered right after a
+// migration backfill or a restart after downtime) must not be announced with a stale
+// amount the first time it's claimed.
+func TestRunOnce_StalePaymentIsNotAnnounced(t *testing.T) {
+	f := setup(t)
+	txID := f.insertQRGenerated(t, time.Now().Add(-time.Second))
+	f.setAnswer(http.StatusOK, paidAnswerAt(time.Now().Add(-time.Hour)))
+
+	f.newPoller().RunOnce(context.Background())
+
+	select {
+	case got := <-f.messages:
+		t.Fatalf("unexpected announcement for a stale payment: %q", got)
+	case <-time.After(2 * time.Second):
+	}
+	if s := f.status(t, txID); s != sqlc.TransactionStatusPAID {
+		t.Errorf("status = %s, want PAID (the transition itself still happens)", s)
 	}
 }

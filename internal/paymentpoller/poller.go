@@ -19,6 +19,11 @@ const (
 	tick      = time.Second
 	batchSize = 20
 	workers   = 8
+
+	// staleAnnouncementAge: a PAID transaction older than this when it's first claimed is
+	// not announced — the amount would already be stale to whoever's standing at the
+	// soundbox (e.g. right after a migration backfill, or a restart after downtime).
+	staleAnnouncementAge = 10 * time.Minute
 )
 
 // PaymentChecker is satisfied by *transaction.Service.
@@ -111,6 +116,10 @@ func (p *Poller) process(ctx context.Context, tx sqlc.Transaction) {
 	done := res.Transaction
 	switch done.Status {
 	case sqlc.TransactionStatusPAID:
+		if age := time.Since(paidAt(done)); age > staleAnnouncementAge {
+			p.logger.Warn("stale payment not announced", "transaction_id", done.TransactionID, "device_id", done.DeviceID, "paid_at", paidAt(done))
+			return
+		}
 		p.announcePaid(ctx, done, res.ManjoAmount)
 	case sqlc.TransactionStatusEXPIRED:
 		via := "manjo"
@@ -123,6 +132,15 @@ func (p *Poller) process(ctx context.Context, tx sqlc.Transaction) {
 	default:
 		p.logger.Info("transaction closed", "transaction_id", done.TransactionID, "status", done.Status)
 	}
+}
+
+// paidAt returns when tx was actually paid, falling back to when it was created if
+// paid_at somehow wasn't set.
+func paidAt(tx sqlc.Transaction) time.Time {
+	if tx.PaidAt.Valid {
+		return tx.PaidAt.Time
+	}
+	return tx.CreatedAt.Time
 }
 
 func (p *Poller) announcePaid(ctx context.Context, tx sqlc.Transaction, manjoAmount int64) {
