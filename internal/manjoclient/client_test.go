@@ -7,6 +7,8 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -210,5 +212,111 @@ func TestGenerateQR_Conflict409(t *testing.T) {
 	}
 	if apiErr.StatusCode != http.StatusConflict {
 		t.Errorf("StatusCode = %d, want 409", apiErr.StatusCode)
+	}
+}
+
+// uatQuerySuccess is a real qr-mpm-query response from UAT after paying via Alto.
+const uatQuerySuccess = `{"responseCode":"2005100","responseMessage":"Successful","originalReferenceNo":"A503988936201952B746","originalPartnerReferenceNo":"E9Q3F86LGI80XP0DCWRBI7WS","originalExternalId":"30443786930722726463280097920912","serviceCode":"47","latestTransactionStatus":"00","transactionStatusDesc":"Success","paidTime":"2026-09-30T10:57:53+07:00","amount":{"value":"10000.00","currency":"IDR"},"feeAmount":{"value":"0.00","currency":"IDR"},"terminalId":"659","additionalInfo":{"currency":"IDR"}}`
+
+func TestQueryPayment_RequestMatchesCollectionFormat(t *testing.T) {
+	cfg := testConfig(t, "")
+	cfg.PartnerID = "MT-TEST-MERCHANT" // must NOT be used as X-PARTNER-ID for query
+
+	var gotHeaders http.Header
+	var gotBody []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1.0/access-token/b2b":
+			json.NewEncoder(w).Encode(AccessTokenResponse{TokenType: "Bearer", AccessToken: "test-access-token", ExpiresIn: "900"})
+		case "/v1.0/qr/qr-mpm-query":
+			gotHeaders = r.Header.Clone()
+			gotBody, _ = io.ReadAll(r.Body)
+			w.Write([]byte(uatQuerySuccess))
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	cfg.BaseURL = server.URL
+
+	resp, err := New(cfg).QueryPayment(context.Background(), QueryPaymentParams{
+		OriginalReferenceNo:        "A503988936201952B746",
+		OriginalPartnerReferenceNo: "TRX-20260930-ABC123",
+		OriginalExternalID:         "EXT123",
+		MerchantID:                 "MT58530503",
+	})
+	if err != nil {
+		t.Fatalf("QueryPayment() error = %v", err)
+	}
+
+	if v := gotHeaders.Get("X-CLIENT-KEY"); v != "" {
+		t.Errorf("X-CLIENT-KEY = %q, want absent (collection format)", v)
+	}
+	if v := gotHeaders.Get("X-PARTNER-ID"); v != cfg.ClientKey {
+		t.Errorf("X-PARTNER-ID = %q, want client key %q", v, cfg.ClientKey)
+	}
+	if v := gotHeaders.Get("Authorization"); v != "Bearer test-access-token" {
+		t.Errorf("Authorization = %q", v)
+	}
+	if v := gotHeaders.Get("CHANNEL-ID"); v != cfg.ChannelID {
+		t.Errorf("CHANNEL-ID = %q, want %q", v, cfg.ChannelID)
+	}
+	if gotHeaders.Get("X-EXTERNAL-ID") == "" {
+		t.Error("X-EXTERNAL-ID is empty")
+	}
+	wantSig, _ := SignHMAC(cfg.ClientSecret, http.MethodPost, "/v1.0/qr/qr-mpm-query", "test-access-token", gotBody, gotHeaders.Get("X-TIMESTAMP"))
+	if v := gotHeaders.Get("X-SIGNATURE"); v != wantSig {
+		t.Errorf("X-SIGNATURE does not match HMAC over path /v1.0/qr/qr-mpm-query and the sent body")
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(gotBody, &body); err != nil {
+		t.Fatalf("request body is not JSON: %v", err)
+	}
+	want := map[string]any{
+		"originalReferenceNo":        "A503988936201952B746",
+		"originalPartnerReferenceNo": "TRX-20260930-ABC123",
+		"originalExternalId":         "EXT123",
+		"serviceCode":                "47",
+		"merchantId":                 "MT58530503",
+	}
+	for k, v := range want {
+		if body[k] != v {
+			t.Errorf("body[%q] = %v, want %v", k, body[k], v)
+		}
+	}
+	if info, _ := body["additionalInfo"].(map[string]any); info["currency"] != "IDR" {
+		t.Errorf("body.additionalInfo = %v, want currency IDR", body["additionalInfo"])
+	}
+
+	if resp.LatestTransactionStatus != "00" || resp.PaidTime != "2026-09-30T10:57:53+07:00" || resp.Amount.Value != "10000.00" {
+		t.Errorf("response parsed as %+v", resp)
+	}
+}
+
+func TestQueryPayment_ExpiredQRIsAPIErrorWithResponseCode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1.0/access-token/b2b" {
+			json.NewEncoder(w).Encode(AccessTokenResponse{TokenType: "Bearer", AccessToken: "t", ExpiresIn: "900"})
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(`{"responseCode":"4035100","responseMessage":"Transaction Expire"}`))
+	}))
+	defer server.Close()
+
+	_, err := New(testConfig(t, server.URL)).QueryPayment(context.Background(), QueryPaymentParams{})
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error = %v, want *APIError", err)
+	}
+	if apiErr.StatusCode != http.StatusForbidden || apiErr.ResponseCode() != "4035100" {
+		t.Errorf("APIError = %d / %q, want 403 / 4035100", apiErr.StatusCode, apiErr.ResponseCode())
+	}
+}
+
+func TestAPIErrorResponseCode_NonJSONBody(t *testing.T) {
+	if got := (&APIError{StatusCode: 502, Body: "<html>bad gateway</html>"}).ResponseCode(); got != "" {
+		t.Errorf("ResponseCode() = %q, want empty", got)
 	}
 }

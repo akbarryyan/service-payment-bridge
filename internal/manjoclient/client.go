@@ -113,6 +113,52 @@ func (c *Client) requestAccessToken(ctx context.Context) (string, time.Duration,
 // used for this attempt (callers persist it for tracing — schema.md
 // transactions.external_id) alongside the response.
 func (c *Client) GenerateQR(ctx context.Context, req GenerateQRRequest) (*GenerateQRResponse, string, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("manjoclient: failed to marshal generate QR request: %w", err)
+	}
+
+	respBody, externalID, err := c.postSigned(ctx, "/v1.0/qr/qr-mpm-generate", body, c.cfg.PartnerID)
+	if err != nil {
+		return nil, externalID, err
+	}
+
+	var qrResp GenerateQRResponse
+	if err := json.Unmarshal(respBody, &qrResp); err != nil {
+		return nil, externalID, fmt.Errorf("manjoclient: failed to parse generate QR response: %w", err)
+	}
+	return &qrResp, externalID, nil
+}
+
+// QueryPayment calls POST /v1.0/qr/qr-mpm-query in the format of the working BI SNAP UAT
+// collection: no X-CLIENT-KEY header, X-PARTNER-ID = client key, serviceCode "47".
+func (c *Client) QueryPayment(ctx context.Context, p QueryPaymentParams) (*QueryPaymentResponse, error) {
+	body, err := json.Marshal(queryPaymentRequest{
+		QueryPaymentParams: p,
+		ServiceCode:        QueryServiceCode,
+		AdditionalInfo:     queryAdditionalInfo{Currency: "IDR"},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("manjoclient: failed to marshal query payment request: %w", err)
+	}
+
+	respBody, _, err := c.postSigned(ctx, "/v1.0/qr/qr-mpm-query", body, c.cfg.ClientKey)
+	if err != nil {
+		return nil, err
+	}
+
+	var queryResp QueryPaymentResponse
+	if err := json.Unmarshal(respBody, &queryResp); err != nil {
+		return nil, fmt.Errorf("manjoclient: failed to parse query payment response: %w", err)
+	}
+	return &queryResp, nil
+}
+
+// postSigned POSTs body to path with the HMAC-signed headers shared by the transactional
+// endpoints and returns the raw 200 body plus the X-EXTERNAL-ID used. Non-200 answers
+// become *APIError. partnerID differs per endpoint: generate sends the merchant ID,
+// query sends the client key.
+func (c *Client) postSigned(ctx context.Context, path string, body []byte, partnerID string) ([]byte, string, error) {
 	token, err := c.tokenManager.Get(ctx)
 	if err != nil {
 		return nil, "", fmt.Errorf("manjoclient: failed to obtain access token: %w", err)
@@ -123,52 +169,38 @@ func (c *Client) GenerateQR(ctx context.Context, req GenerateQRRequest) (*Genera
 		return nil, "", err
 	}
 
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, "", fmt.Errorf("manjoclient: failed to marshal generate QR request: %w", err)
-	}
-
 	timestamp := NowJakarta()
-	const path = "/v1.0/qr/qr-mpm-generate"
-
 	signature, err := SignHMAC(c.cfg.ClientSecret, http.MethodPost, path, token, body, timestamp)
 	if err != nil {
 		return nil, "", err
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.BaseURL+path, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.cfg.BaseURL+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, "", err
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+token)
-	httpReq.Header.Set("X-TIMESTAMP", timestamp)
-	httpReq.Header.Set("X-SIGNATURE", signature)
-	httpReq.Header.Set("X-PARTNER-ID", c.cfg.PartnerID)
-	httpReq.Header.Set("X-EXTERNAL-ID", externalID)
-	httpReq.Header.Set("CHANNEL-ID", c.cfg.ChannelID)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-TIMESTAMP", timestamp)
+	req.Header.Set("X-SIGNATURE", signature)
+	req.Header.Set("X-PARTNER-ID", partnerID)
+	req.Header.Set("X-EXTERNAL-ID", externalID)
+	req.Header.Set("CHANNEL-ID", c.cfg.ChannelID)
 
-	resp, err := c.httpClient.Do(httpReq)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, externalID, fmt.Errorf("manjoclient: generate QR request failed: %w", err)
+		return nil, externalID, fmt.Errorf("manjoclient: POST %s failed: %w", path, err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, externalID, fmt.Errorf("manjoclient: failed to read generate QR response: %w", err)
+		return nil, externalID, fmt.Errorf("manjoclient: failed to read %s response: %w", path, err)
 	}
-
 	if resp.StatusCode != http.StatusOK {
 		return nil, externalID, &APIError{StatusCode: resp.StatusCode, Body: string(respBody)}
 	}
-
-	var qrResp GenerateQRResponse
-	if err := json.Unmarshal(respBody, &qrResp); err != nil {
-		return nil, externalID, fmt.Errorf("manjoclient: failed to parse generate QR response: %w", err)
-	}
-
-	return &qrResp, externalID, nil
+	return respBody, externalID, nil
 }
 
 // InvalidateToken forces the next call through TokenManager to fetch a

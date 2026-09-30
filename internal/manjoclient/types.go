@@ -2,6 +2,7 @@ package manjoclient
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -90,4 +91,51 @@ type APIError struct {
 
 func (e *APIError) Error() string {
 	return fmt.Sprintf("manjoclient: manjo returned HTTP %d: %s", e.StatusCode, e.Body)
+}
+
+// ResponseCode extracts Manjo's 7-digit responseCode from the error body, or "" when the
+// body is not JSON (e.g. "4035100" = QR expired, returned by qr-mpm-query with HTTP 403).
+func (e *APIError) ResponseCode() string {
+	var body struct {
+		ResponseCode string `json:"responseCode"`
+	}
+	if json.Unmarshal([]byte(e.Body), &body) != nil {
+		return ""
+	}
+	return body.ResponseCode
+}
+
+// QueryServiceCode is the body serviceCode sent by the BI SNAP UAT collection. The docs
+// say "99"; the collection works in UAT and is confirmed for production, so it wins.
+const QueryServiceCode = "47"
+
+// QueryPaymentParams identifies the transaction to look up with qr-mpm-query.
+type QueryPaymentParams struct {
+	OriginalReferenceNo        string `json:"originalReferenceNo"`        // referenceNo from qr-mpm-generate
+	OriginalPartnerReferenceNo string `json:"originalPartnerReferenceNo"` // our transaction_id
+	OriginalExternalID         string `json:"originalExternalId"`         // X-EXTERNAL-ID used at generate time
+	MerchantID                 string `json:"merchantId"`
+}
+
+type queryPaymentRequest struct {
+	QueryPaymentParams
+	ServiceCode    string              `json:"serviceCode"`
+	AdditionalInfo queryAdditionalInfo `json:"additionalInfo"`
+}
+
+type queryAdditionalInfo struct {
+	Currency string `json:"currency"`
+}
+
+// QueryPaymentResponse is a 200 answer from qr-mpm-query. LatestTransactionStatus uses
+// the Query status scheme (manjo-api-docs.md 5.10), NOT the Payment Notification one.
+type QueryPaymentResponse struct {
+	ResponseCode               string `json:"responseCode"`
+	ResponseMessage            string `json:"responseMessage"`
+	OriginalReferenceNo        string `json:"originalReferenceNo"`
+	OriginalPartnerReferenceNo string `json:"originalPartnerReferenceNo"`
+	LatestTransactionStatus    string `json:"latestTransactionStatus"`
+	TransactionStatusDesc      string `json:"transactionStatusDesc"`
+	PaidTime                   string `json:"paidTime"`
+	Amount                     Amount `json:"amount"`
 }
