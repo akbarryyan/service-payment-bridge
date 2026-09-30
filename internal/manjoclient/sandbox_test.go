@@ -56,8 +56,9 @@ func TestSandbox_AccessTokenAndGenerateQR(t *testing.T) {
 	}
 	t.Logf("access token obtained, expiresIn=%v", expiresIn)
 
+	partnerReferenceNo := "SANDBOX-TEST-" + time.Now().Format("20060102150405")
 	resp, externalID, err := c.GenerateQR(reqCtx, GenerateQRRequest{
-		PartnerReferenceNo: "SANDBOX-TEST-" + time.Now().Format("20060102150405"),
+		PartnerReferenceNo: partnerReferenceNo,
 		Amount:             Amount{Value: "1000.00", Currency: "IDR"},
 		MerchantID:         merchantID,
 		ValidityPeriod:     "3600",
@@ -75,6 +76,23 @@ func TestSandbox_AccessTokenAndGenerateQR(t *testing.T) {
 	}
 	t.Logf("qrContent received (%d chars), referenceNo=%s", len(resp.QRContent), resp.ReferenceNo)
 	t.Logf("externalID used=%s", externalID)
+
+	queryResp, err := c.QueryPayment(reqCtx, QueryPaymentParams{
+		OriginalReferenceNo:        resp.ReferenceNo,
+		OriginalPartnerReferenceNo: partnerReferenceNo,
+		OriginalExternalID:         externalID,
+		MerchantID:                 merchantID,
+	})
+	if err != nil {
+		t.Fatalf("QueryPayment() against sandbox failed: %v", err)
+	}
+	switch queryResp.LatestTransactionStatus {
+	case "01", "02", "03":
+		// expected: initiated/paying/pending — the QR was just generated, not paid.
+	default:
+		t.Errorf("QueryPayment() latestTransactionStatus = %q, want one of 01/02/03", queryResp.LatestTransactionStatus)
+	}
+	t.Logf("QueryPayment latestTransactionStatus=%s transactionStatusDesc=%s", queryResp.LatestTransactionStatus, queryResp.TransactionStatusDesc)
 }
 
 func mustResolve(t *testing.T, ctx context.Context, p secrets.Provider, ref string) string {

@@ -134,9 +134,12 @@ func (c *Client) GenerateQR(ctx context.Context, req GenerateQRRequest) (*Genera
 // collection: no X-CLIENT-KEY header, X-PARTNER-ID = client key, serviceCode "47".
 func (c *Client) QueryPayment(ctx context.Context, p QueryPaymentParams) (*QueryPaymentResponse, error) {
 	body, err := json.Marshal(queryPaymentRequest{
-		QueryPaymentParams: p,
-		ServiceCode:        QueryServiceCode,
-		AdditionalInfo:     queryAdditionalInfo{Currency: "IDR"},
+		OriginalReferenceNo:        p.OriginalReferenceNo,
+		OriginalPartnerReferenceNo: p.OriginalPartnerReferenceNo,
+		OriginalExternalID:         p.OriginalExternalID,
+		ServiceCode:                QueryServiceCode,
+		MerchantID:                 p.MerchantID,
+		AdditionalInfo:             queryAdditionalInfo{Currency: "IDR"},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("manjoclient: failed to marshal query payment request: %w", err)

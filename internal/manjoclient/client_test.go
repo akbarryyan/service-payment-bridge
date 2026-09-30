@@ -269,6 +269,13 @@ func TestQueryPayment_RequestMatchesCollectionFormat(t *testing.T) {
 		t.Errorf("X-SIGNATURE does not match HMAC over path /v1.0/qr/qr-mpm-query and the sent body")
 	}
 
+	// Manjo re-serializes the body before verifying X-SIGNATURE, so field order must
+	// match the collection exactly, not just have the right keys/values.
+	wantBody := `{"originalReferenceNo":"A503988936201952B746","originalPartnerReferenceNo":"TRX-20260930-ABC123","originalExternalId":"EXT123","serviceCode":"47","merchantId":"MT58530503","additionalInfo":{"currency":"IDR"}}`
+	if string(gotBody) != wantBody {
+		t.Errorf("body = %s, want exact collection field order %s", gotBody, wantBody)
+	}
+
 	var body map[string]any
 	if err := json.Unmarshal(gotBody, &body); err != nil {
 		t.Fatalf("request body is not JSON: %v", err)

@@ -117,10 +117,17 @@ type QueryPaymentParams struct {
 	MerchantID                 string `json:"merchantId"`
 }
 
+// queryPaymentRequest's field order must match the collection exactly (not just its
+// keys/values): Manjo re-serializes the body before verifying X-SIGNATURE, so a
+// differently-ordered-but-equivalent JSON object fails HMAC verification (HTTP 401
+// 4015100 "Unauthorized Signature"), even though the plain field values are correct.
 type queryPaymentRequest struct {
-	QueryPaymentParams
-	ServiceCode    string              `json:"serviceCode"`
-	AdditionalInfo queryAdditionalInfo `json:"additionalInfo"`
+	OriginalReferenceNo        string              `json:"originalReferenceNo"`
+	OriginalPartnerReferenceNo string              `json:"originalPartnerReferenceNo"`
+	OriginalExternalID         string              `json:"originalExternalId"`
+	ServiceCode                string              `json:"serviceCode"`
+	MerchantID                 string              `json:"merchantId"`
+	AdditionalInfo             queryAdditionalInfo `json:"additionalInfo"`
 }
 
 type queryAdditionalInfo struct {
