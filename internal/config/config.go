@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/kelseyhightower/envconfig"
@@ -22,6 +23,9 @@ func Load() (*Config, error) {
 	var cfg Config
 	if err := envconfig.Process("", &cfg); err != nil {
 		return nil, err
+	}
+	if cfg.PaymentPollInterval <= 0 {
+		return nil, fmt.Errorf("config: PAYMENT_POLL_INTERVAL must be positive, got %s", cfg.PaymentPollInterval)
 	}
 	return &cfg, nil
 }

@@ -52,3 +52,14 @@ func TestLoad_PaymentPollIntervalOverride(t *testing.T) {
 		t.Errorf("PaymentPollInterval = %v, want 5s", cfg.PaymentPollInterval)
 	}
 }
+
+func TestLoad_NonPositivePaymentPollIntervalRejected(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	t.Setenv("MQTT_BROKER_URL", "tcp://localhost:1883")
+	t.Setenv("PAYMENT_POLL_INTERVAL", "0s")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() expected error for PAYMENT_POLL_INTERVAL=0s, got nil")
+	}
+}
