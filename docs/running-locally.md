@@ -135,6 +135,8 @@ Biarkan terminal ini terbuka. Service berjalan selama terminal hidup, dan `Ctrl+
 | `"announcement failed"` | Pengumuman audio gagal dikirim ke broker setelah 3 percobaan. Transaksi tetap `PAID` |
 | `"transaction expired"` | QR kedaluwarsa. `via: "manjo"` = dijawab Manjo, `via: "deadline"` = jaring pengaman (2 menit lewat `expire_at`) |
 | `"payment query failed"` | Query status ke Manjo gagal atau jawabannya tidak dikenal. Otomatis dicoba lagi 3 detik kemudian |
+| `"payment check failed"` | Error database saat mengecek satu transaksi (bukan error dari Manjo). Transaksi itu otomatis dicoba lagi di siklus poll berikutnya |
+| `"payment check panicked"` | Satu worker poller panic saat mengecek transaksi (mis. bug di checker/announcer). Di-*recover*, transaksi lain tidak terpengaruh, service tetap jalan |
 | `"amount mismatch"` | Nominal dari Manjo berbeda dengan nominal transaksi. Pengumuman tetap memakai nominal transaksi |
 
 Setelah generate QR, service mengecek status pembayaran ke Manjo tiap `PAYMENT_POLL_INTERVAL` (default `3s`, di `.env`) sampai QR dibayar atau kedaluwarsa (~7,5 menit). Begitu dibayar, soundbox membunyikan nominalnya.

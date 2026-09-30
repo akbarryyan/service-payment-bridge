@@ -271,7 +271,7 @@ Customer        Manjo           Payment Bridge        MQTT Broker      Q161 Pro 
    │               │                    │ update tx status  │              │             │
    │               │◀───────────────────│ 200 OK            │              │             │
    │               │                    │                   │              │             │
-   │               │                    │ build audio_sequence             │             │
+   │               │                    │ build audio payload (.mp3 list)  │             │
    │               │                    │ publish            │              │             │
    │               │                    │ topic_{mid}        │              │             │
    │               │                    │──────────────────▶│              │             │
@@ -688,13 +688,13 @@ Item yang masih perlu diputuskan/dikonfirmasi sebelum implementasi final (carry-
 
 | # | Keputusan | Pemilik | Dampak kalau belum diputuskan |
 |---|---|---|---|
-| 1 | Format final `audio_sequence` — string `+`-separated (pola Q181) vs array JSON | Kamu (firmware Q161) | Menentukan struktur payload di [Section 7.3](#7-kontrak-internal-q161--service) |
+| 1 | ~~Format final `audio_sequence` — string `+`-separated (pola Q181) vs array JSON~~ — **Diputuskan:** plain-text, daftar path `.mp3` dipisah `+` (ground truth firmware) | Kamu (firmware Q161) | Selesai — lihat [Section 7.3](#7-kontrak-internal-q161--service) |
 | 2 | Siapa generate `transaction_id` — Service (rekomendasi) atau Q161 | Kamu | Kalau Q161 yang generate, perlu skema penomoran yang dijamin unique lintas device |
 | 3 | Kredensial Manjo per-merchant vs per-partner (satu kredensial untuk semua merchant) | Kamu / kesepakatan bisnis dengan Manjo | Menentukan struktur tabel `merchants` — apakah kolom kredensial per-baris atau di tabel config global terpisah |
 | 4 | Perbedaan status `00` (Success) vs `03` (Paid) dari Manjo | Konfirmasi ke tim Manjo | Sementara di-treat sama (`PAID`) — risiko kalau ternyata beda arti |
 | 5 | `validityPeriod` QR (detik) — berapa lama QR valid sebelum `EXPIRED` | Kamu | Mempengaruhi UX Q161 (kapan device re-generate QR otomatis) |
 | 6 | QoS & retain MQTT untuk tiap jenis pesan | Kamu | Mempengaruhi reliability delivery, terutama utk notifikasi pembayaran yang tidak boleh hilang |
-| 7 | Apakah reconciliation job (Query Payment berkala untuk transaksi `QR_GENERATED` mendekati/lewat `expire_at`) masuk scope v1, atau auto-expire murni berdasarkan `expire_at` tanpa cross-check ke Manjo | Kamu | Kalau tidak diimplementasikan, transaksi yang notifikasinya hilang akan salah ditandai `EXPIRED` walau sebenarnya sudah dibayar |
+| 7 | ~~Apakah reconciliation job (Query Payment berkala untuk transaksi `QR_GENERATED` mendekati/lewat `expire_at`) masuk scope v1~~ — **Diputuskan:** polling Query Payment tiap 3 detik sepanjang masa berlaku QR jadi jalur deteksi utama (bukan job reconciliation terpisah) | Kamu | Selesai — lihat [process-flow.md Flow 5](process-flow.md#6-flow-5--payment-polling) |
 
 ---
 
