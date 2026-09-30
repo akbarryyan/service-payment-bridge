@@ -32,7 +32,7 @@ cp .env.sandbox.example .env.sandbox
 ```
 
 - **`.env`** berisi konfigurasi aplikasi: port HTTP, koneksi DB, broker MQTT, dan base URL Manjo. Nilai default di `.env.example` sudah cocok untuk setup lokal (`MANJO_BASE_URL` mengarah ke UAT Manjo).
-- **`.env.sandbox`** berisi kredensial Manjo UAT (merchant sandbox "Pupuk Kalteng"): `MANJO_SANDBOX_CLIENT_KEY`, `MANJO_SANDBOX_PRIVATE_KEY`, `MANJO_SANDBOX_CLIENT_SECRET`, `MANJO_SANDBOX_MERCHANT_ID`. Minta nilainya ke pemegang kredensial, jangan dikirim lewat chat atau repo.
+- **`.env.sandbox`** berisi kredensial Manjo UAT (merchant sandbox "Pupuk Kalteng"): `MANJO_SANDBOX_CLIENT_KEY`, `MANJO_SANDBOX_PRIVATE_KEY`, `MANJO_SANDBOX_CLIENT_SECRET`, `MANJO_SANDBOX_MERCHANT_ID`. Minta nilainya ke pemegang kredensial, jangan dikirim lewat chat atau repo. File ini juga berisi `ALTO_API_KEY` dan `ALTO_VALIDATION_KEY` untuk simulator pembayaran Alto (Section 5). Nilainya ada di `docs/manjo-collection/QR Payment.yml` (`API_KEY` dan `VALIDATION_KEY`).
 
 > **Kenapa kredensial ada di file terpisah?** Tabel `merchants` tidak menyimpan kredensial, hanya **nama env var**-nya (`manjo_private_key_ref`, `manjo_client_secret_ref`). Service lalu membaca nilai env var tersebut saat runtime. Kalau `.env.sandbox` tidak ada atau isinya kosong, setiap generate QR gagal dengan `CONFIG_ERROR`, dan di log server muncul `"generate QR failed"` dengan `cause` berbunyi `environment variable "..." not set`.
 
@@ -155,6 +155,27 @@ mosquitto_pub -h localhost -p 11883 -t "qris/request" -m "MT58530503|5000000"
 ```
 
 Kalau sukses, balasannya `topic_MT58530503 QR:00020101...`. Balasan `Gagal membuat QR, coba lagi` berarti gagal, dan penyebabnya ada di log server.
+
+### Simulasi pembayaran (bayar → soundbox bunyi)
+
+Pembayaran di UAT bisa disimulasikan tanpa m-banking lewat simulator Alto:
+
+1. Generate QR dari device (menu QRIS Dinamis), atau lewat `mosquitto_pub` seperti di atas.
+2. Ambil `transaction_id` terbaru:
+   ```bash
+   docker compose exec postgres psql -U payment_bridge -d payment_bridge -c \
+     "SELECT transaction_id, amount, status FROM transactions ORDER BY created_at DESC LIMIT 1;"
+   ```
+3. Bayar QR-nya (harus sebelum QR kedaluwarsa, ~7,5 menit):
+   ```bash
+   go run ./cmd/altosim -tx TRX-20260930-XXXXXX
+   ```
+   Output-nya menampilkan merchant, nominal, reference, dan respons Alto.
+4. Dalam ~3 detik soundbox berbunyi "…lima puluh ribu…", log server menampilkan `"payment detected"`, dan status transaksinya menjadi `PAID`.
+
+Kalau QR dibiarkan tanpa dibayar, sekitar 7,5 menit kemudian log menampilkan `"transaction expired"` dan soundbox tidak berbunyi.
+
+`-qr "<qrContent>"` bisa dipakai sebagai pengganti `-tx` kalau `qrContent`-nya sudah ada di tangan.
 
 ---
 
