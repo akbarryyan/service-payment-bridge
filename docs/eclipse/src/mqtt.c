@@ -90,6 +90,10 @@ static void onTopicMessageArrived(MessageData* md)
 		char *pSep;
 		char one[128];
 
+		// Ditandai sebelum audio diputar supaya layar QR langsung berganti, tidak menunggu
+		// seluruh urutan berkas selesai.
+		G_qrisPaid = 1;
+
 		while (pStart != NULL && *pStart != 0)
 		{
 			int ret, tries = 0;

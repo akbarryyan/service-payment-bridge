@@ -42,6 +42,14 @@ extern volatile long G_qrisReqAmount;		// nominal dalam sen
 extern volatile int  G_qrisReplyReady;		// 1 = G_qrisReply sudah berisi balasan
 extern char          G_qrisReply[QRIS_MAX_LEN];
 
+// Lama QR ditampilkan, dalam detik. Sedikit di bawah masa berlaku QR di Manjo (~7,5 menit,
+// expiryDuration 450000 ms) supaya layar tidak pernah menampilkan QR yang sudah mati.
+#define QRIS_DISPLAY_SEC	420
+
+// 1 = pengumuman pembayaran (.mp3) diterima utas MQTT. Layar QR memakainya untuk pindah ke
+// "Pembayaran Berhasil": backend hanya mengirim .mp3 untuk transaksi yang sudah dibayar.
+extern volatile int  G_qrisPaid;
+
 void QRCodeDisp(void);
 void QRCodeDispText(const char *text);
 void QrisDinamis(void);

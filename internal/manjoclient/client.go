@@ -11,7 +11,9 @@ import (
 	"time"
 )
 
-const defaultBaseURL = "https://snapqris.manjo.co.id/api"
+// defaultBaseURL is the production host, used only when Config.BaseURL
+// (MANJO_BASE_URL) is empty.
+const defaultBaseURL = "https://snap.manjo.co.id/api"
 
 type Client struct {
 	cfg          Config

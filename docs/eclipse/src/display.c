@@ -13,6 +13,7 @@ volatile int  G_qrisReqPending = 0;
 volatile long G_qrisReqAmount  = 0;
 volatile int  G_qrisReplyReady = 0;
 char          G_qrisReply[QRIS_MAX_LEN];
+volatile int  G_qrisPaid       = 0;
 
 // Tingkat koreksi galat, mengikuti demo. Makin tinggi makin tahan kotor dan pantulan, tapi makin
 // sedikit data yang muat pada versi yang sama.
@@ -28,6 +29,16 @@ char          G_qrisReply[QRIS_MAX_LEN];
 // 1 = tampilkan angka hasil pengukuran sebelum QR. Dipakai saat menyetel tata letaknya; nyalakan
 // lagi bila suatu saat QR-nya meleset dari layar.
 #define QR_DIAG		0
+
+// Baris teks countdown di bawah QR (indeks 0-based). Diukur dari foto perangkat: satu baris
+// kira-kira 24 piksel dan QR berakhir sekitar y=413, jadi ruang kosongnya baris 16-18. Baris 12
+// terbukti jatuh di tengah QR; 17 dipilih supaya tetap aman bila ukurannya meleset satu baris.
+#define QR_COUNTDOWN_ROW	17
+
+// Layar mati 30 detik setelah tombol terakhir (ScrBackLight_Api(30) di main.c). Selama QR
+// tampil lampunya dipaksa menyala supaya customer tetap bisa memindai.
+#define BACKLIGHT_ALWAYS_ON	0xFFFF
+#define BACKLIGHT_DEFAULT_SEC	30
 
 // Membaca lebar BMP hasil encode dari header berkasnya: BMP menyimpan lebar sebagai empat byte
 // little-endian pada offset 18.
@@ -143,6 +154,90 @@ void QRCodeDisp(void)
 	QRCodeDispText("http://115.159.28.147:54321/hivemq.htm");
 }
 
+// Menulis nominal (dalam sen) sebagai "Rp 1.250.000". Sen dibuang karena nominal QRIS dinamis
+// selalu Rupiah bulat.
+static void formatRupiah(char *out, int outLen, long sen)
+{
+	char digits[24];
+	char grouped[32];
+	int len, i, j = 0;
+
+	snprintf(digits, sizeof(digits), "%ld", sen / 100);
+	len = strlen(digits);
+	for (i = 0; i < len; i++) {
+		if (i > 0 && (len - i) % 3 == 0)
+			grouped[j++] = '.';
+		grouped[j++] = digits[i];
+	}
+	grouped[j] = 0;
+
+	snprintf(out, outLen, "Rp %s", grouped);
+}
+
+static void qrisShowCountdown(int remaining)
+{
+	char line[32];
+
+	snprintf(line, sizeof(line), "Berlaku %02d:%02d", remaining / 60, remaining % 60);
+	ScrDisp_Api(QR_COUNTDOWN_ROW, 0, line, CDISP);
+}
+
+static void qrisShowPaid(long sen)
+{
+	char line[32];
+
+	formatRupiah(line, sizeof(line), sen);
+	ScrCls_Api();
+	ScrDisp_Api(LINE5, 0, "PEMBAYARAN BERHASIL", CDISP);
+	ScrDisp_Api(LINE7, 0, line, CDISP);
+	WaitAnyKey_Api(5);
+}
+
+static void qrisShowExpired(void)
+{
+	ScrCls_Api();
+	ScrDisp_Api(LINE5, 0, "QR kedaluwarsa", CDISP);
+	ScrDisp_Api(LINE7, 0, "Silakan buat QR baru", CDISP);
+	WaitAnyKey_Api(3);
+}
+
+// Menahan QR di layar sambil menghitung mundur, sampai pembayaran masuk, waktu habis, atau
+// merchant menekan tombol untuk membatalkan.
+static void qrisWaitPayment(long sen)
+{
+	unsigned int timerId = TimerSet_Api();
+	int remaining = QRIS_DISPLAY_SEC;
+	int paid = 0, cancelled = 0;
+
+	ScrBackLight_Api(BACKLIGHT_ALWAYS_ON);
+	qrisShowCountdown(remaining);
+
+	while (remaining > 0) {
+		if (G_qrisPaid) {
+			paid = 1;
+			break;
+		}
+		if (GetKey_Api() != 0) {
+			cancelled = 1;
+			break;
+		}
+		// Diukur dari awal tampil, bukan dari detik sebelumnya, supaya keterlambatan putaran
+		// tidak menumpuk dan hitungan tidak melewati masa berlaku QR yang sebenarnya.
+		if (TimerCheck_Api(timerId, (QRIS_DISPLAY_SEC - remaining + 1) * 1000)) {
+			remaining--;
+			qrisShowCountdown(remaining);
+		}
+		Delay_Api(50);
+	}
+
+	ScrBackLight_Api(BACKLIGHT_DEFAULT_SEC);
+
+	if (paid)
+		qrisShowPaid(sen);
+	else if (!cancelled)
+		qrisShowExpired();
+}
+
 // Alur QRIS dinamis: merchant mengetik nominal, perangkat meminta string QRIS ke backend lewat
 // MQTT, lalu menampilkannya sebagai kode QR. Perangkat sengaja tidak tahu dari mana string itu
 // berasal -- backend boleh mengarangnya sendiri saat uji coba, atau memintanya ke gateway
@@ -180,6 +275,7 @@ void QrisDinamis(void)
 	// Serahkan ke utas MQTT. Bendera balasan dibersihkan lebih dulu supaya balasan lama dari
 	// permintaan sebelumnya tidak terbaca sebagai jawaban permintaan ini.
 	G_qrisReplyReady = 0;
+	G_qrisPaid       = 0;
 	G_qrisReqAmount  = amt;
 	G_qrisReqPending = 1;
 
@@ -197,7 +293,7 @@ void QrisDinamis(void)
 	}
 
 	QRCodeDispText(G_qrisReply);
-	WaitAnyKey_Api(60);
+	qrisWaitPayment(amt);
 }
 
 void DispMainFace(void)
