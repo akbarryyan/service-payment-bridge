@@ -149,6 +149,12 @@ func TestGenerateQR_Success(t *testing.T) {
 	if !tx.ExternalID.Valid || tx.ExternalID.String == "" {
 		t.Error("stored external_id is empty")
 	}
+	if !tx.NextQueryAt.Valid {
+		t.Fatal("next_query_at is NULL, want it scheduled for the payment poller")
+	}
+	if d := time.Until(tx.NextQueryAt.Time); d <= 0 || d > DefaultPollInterval {
+		t.Errorf("next_query_at is %v from now, want within (0, %v]", d, DefaultPollInterval)
+	}
 
 	rows, err := pool.Query(context.Background(), `SELECT operation, http_status FROM manjo_api_logs WHERE transaction_id = $1`, result.TransactionID)
 	if err != nil {

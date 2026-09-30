@@ -19,7 +19,7 @@ RETURNING id, topic, payload, direction, status, transaction_id, created_at, pro
 
 type LogMQTTMessageParams struct {
 	Topic         string            `json:"topic"`
-	Payload       []byte            `json:"payload"`
+	Payload       string            `json:"payload"`
 	Direction     MqttDirection     `json:"direction"`
 	Status        MqttMessageStatus `json:"status"`
 	TransactionID pgtype.Text       `json:"transaction_id"`

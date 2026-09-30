@@ -11,10 +11,71 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimDueTransactions = `-- name: ClaimDueTransactions :many
+UPDATE transactions
+SET next_query_at = $1::timestamptz
+WHERE transaction_id IN (
+    SELECT t.transaction_id FROM transactions t
+    WHERE t.status = 'QR_GENERATED'
+      AND t.next_query_at <= now()
+      AND ($2::varchar IS NULL OR t.merchant_id = $2::varchar)
+    ORDER BY t.next_query_at
+    LIMIT $3::int
+    FOR UPDATE SKIP LOCKED
+)
+RETURNING id, transaction_id, reference_no, merchant_id, amount, status, manjo_status_code, qris_payload, external_id, expire_at, created_at, paid_at, updated_at, device_id, next_query_at
+`
+
+type ClaimDueTransactionsParams struct {
+	NextQueryAt pgtype.Timestamptz `json:"next_query_at"`
+	MerchantID  pgtype.Text        `json:"merchant_id"`
+	BatchSize   int32              `json:"batch_size"`
+}
+
+// Claims up to batch_size QR_GENERATED transactions whose next check is due and pushes
+// their next check to next_query_at, so a failed or crashed check is retried next time.
+// SKIP LOCKED keeps two poller instances from claiming the same row. merchant_id NULL
+// means all merchants (tests pass their own merchant to stay off real rows).
+func (q *Queries) ClaimDueTransactions(ctx context.Context, arg ClaimDueTransactionsParams) ([]Transaction, error) {
+	rows, err := q.db.Query(ctx, claimDueTransactions, arg.NextQueryAt, arg.MerchantID, arg.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Transaction
+	for rows.Next() {
+		var i Transaction
+		if err := rows.Scan(
+			&i.ID,
+			&i.TransactionID,
+			&i.ReferenceNo,
+			&i.MerchantID,
+			&i.Amount,
+			&i.Status,
+			&i.ManjoStatusCode,
+			&i.QrisPayload,
+			&i.ExternalID,
+			&i.ExpireAt,
+			&i.CreatedAt,
+			&i.PaidAt,
+			&i.UpdatedAt,
+			&i.DeviceID,
+			&i.NextQueryAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const createTransaction = `-- name: CreateTransaction :one
 INSERT INTO transactions (transaction_id, merchant_id, device_id, amount, status)
 VALUES ($1, $2, $3, $4, 'PENDING')
-RETURNING id, transaction_id, reference_no, merchant_id, amount, status, manjo_status_code, qris_payload, external_id, expire_at, created_at, paid_at, updated_at, device_id
+RETURNING id, transaction_id, reference_no, merchant_id, amount, status, manjo_status_code, qris_payload, external_id, expire_at, created_at, paid_at, updated_at, device_id, next_query_at
 `
 
 type CreateTransactionParams struct {
@@ -47,12 +108,13 @@ func (q *Queries) CreateTransaction(ctx context.Context, arg CreateTransactionPa
 		&i.PaidAt,
 		&i.UpdatedAt,
 		&i.DeviceID,
+		&i.NextQueryAt,
 	)
 	return i, err
 }
 
 const getTransactionByID = `-- name: GetTransactionByID :one
-SELECT id, transaction_id, reference_no, merchant_id, amount, status, manjo_status_code, qris_payload, external_id, expire_at, created_at, paid_at, updated_at, device_id FROM transactions WHERE transaction_id = $1
+SELECT id, transaction_id, reference_no, merchant_id, amount, status, manjo_status_code, qris_payload, external_id, expire_at, created_at, paid_at, updated_at, device_id, next_query_at FROM transactions WHERE transaction_id = $1
 `
 
 func (q *Queries) GetTransactionByID(ctx context.Context, transactionID string) (Transaction, error) {
@@ -73,6 +135,7 @@ func (q *Queries) GetTransactionByID(ctx context.Context, transactionID string) 
 		&i.PaidAt,
 		&i.UpdatedAt,
 		&i.DeviceID,
+		&i.NextQueryAt,
 	)
 	return i, err
 }
@@ -82,7 +145,7 @@ UPDATE transactions
 SET status = 'FAILED',
     updated_at = now()
 WHERE transaction_id = $1
-RETURNING id, transaction_id, reference_no, merchant_id, amount, status, manjo_status_code, qris_payload, external_id, expire_at, created_at, paid_at, updated_at, device_id
+RETURNING id, transaction_id, reference_no, merchant_id, amount, status, manjo_status_code, qris_payload, external_id, expire_at, created_at, paid_at, updated_at, device_id, next_query_at
 `
 
 func (q *Queries) MarkTransactionFailed(ctx context.Context, transactionID string) (Transaction, error) {
@@ -103,6 +166,7 @@ func (q *Queries) MarkTransactionFailed(ctx context.Context, transactionID strin
 		&i.PaidAt,
 		&i.UpdatedAt,
 		&i.DeviceID,
+		&i.NextQueryAt,
 	)
 	return i, err
 }
@@ -114,9 +178,10 @@ SET status = 'QR_GENERATED',
     reference_no = $3,
     external_id = $4,
     expire_at = $5,
+    next_query_at = $6,
     updated_at = now()
 WHERE transaction_id = $1
-RETURNING id, transaction_id, reference_no, merchant_id, amount, status, manjo_status_code, qris_payload, external_id, expire_at, created_at, paid_at, updated_at, device_id
+RETURNING id, transaction_id, reference_no, merchant_id, amount, status, manjo_status_code, qris_payload, external_id, expire_at, created_at, paid_at, updated_at, device_id, next_query_at
 `
 
 type MarkTransactionQRGeneratedParams struct {
@@ -125,6 +190,7 @@ type MarkTransactionQRGeneratedParams struct {
 	ReferenceNo   pgtype.Text        `json:"reference_no"`
 	ExternalID    pgtype.Text        `json:"external_id"`
 	ExpireAt      pgtype.Timestamptz `json:"expire_at"`
+	NextQueryAt   pgtype.Timestamptz `json:"next_query_at"`
 }
 
 func (q *Queries) MarkTransactionQRGenerated(ctx context.Context, arg MarkTransactionQRGeneratedParams) (Transaction, error) {
@@ -134,6 +200,7 @@ func (q *Queries) MarkTransactionQRGenerated(ctx context.Context, arg MarkTransa
 		arg.ReferenceNo,
 		arg.ExternalID,
 		arg.ExpireAt,
+		arg.NextQueryAt,
 	)
 	var i Transaction
 	err := row.Scan(
@@ -151,6 +218,56 @@ func (q *Queries) MarkTransactionQRGenerated(ctx context.Context, arg MarkTransa
 		&i.PaidAt,
 		&i.UpdatedAt,
 		&i.DeviceID,
+		&i.NextQueryAt,
+	)
+	return i, err
+}
+
+const transitionFromQRGenerated = `-- name: TransitionFromQRGenerated :one
+UPDATE transactions
+SET status = $1::transaction_status,
+    manjo_status_code = COALESCE($2::varchar, manjo_status_code),
+    paid_at = COALESCE($3::timestamptz, paid_at),
+    next_query_at = NULL,
+    updated_at = now()
+WHERE transaction_id = $4 AND status = 'QR_GENERATED'
+RETURNING id, transaction_id, reference_no, merchant_id, amount, status, manjo_status_code, qris_payload, external_id, expire_at, created_at, paid_at, updated_at, device_id, next_query_at
+`
+
+type TransitionFromQRGeneratedParams struct {
+	Status          TransactionStatus  `json:"status"`
+	ManjoStatusCode pgtype.Text        `json:"manjo_status_code"`
+	PaidAt          pgtype.Timestamptz `json:"paid_at"`
+	TransactionID   string             `json:"transaction_id"`
+}
+
+// Moves a transaction out of QR_GENERATED. Returns no row when it already left that
+// state, so exactly one caller — across instances — performs each transition.
+// NULL manjo_status_code / paid_at leave the stored values unchanged.
+func (q *Queries) TransitionFromQRGenerated(ctx context.Context, arg TransitionFromQRGeneratedParams) (Transaction, error) {
+	row := q.db.QueryRow(ctx, transitionFromQRGenerated,
+		arg.Status,
+		arg.ManjoStatusCode,
+		arg.PaidAt,
+		arg.TransactionID,
+	)
+	var i Transaction
+	err := row.Scan(
+		&i.ID,
+		&i.TransactionID,
+		&i.ReferenceNo,
+		&i.MerchantID,
+		&i.Amount,
+		&i.Status,
+		&i.ManjoStatusCode,
+		&i.QrisPayload,
+		&i.ExternalID,
+		&i.ExpireAt,
+		&i.CreatedAt,
+		&i.PaidAt,
+		&i.UpdatedAt,
+		&i.DeviceID,
+		&i.NextQueryAt,
 	)
 	return i, err
 }

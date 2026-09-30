@@ -22,16 +22,26 @@ const (
 	maxTransientRetries = 3
 )
 
+// DefaultPollInterval is how long after QR generation, and between checks, the payment
+// poller asks Manjo for a transaction's status (config PAYMENT_POLL_INTERVAL).
+const DefaultPollInterval = 3 * time.Second
+
 type Service struct {
-	q        *sqlc.Queries
-	registry *manjoclient.Registry
-	secrets  secrets.Provider
-	baseURL  string // "" berarti pakai default manjoclient.Client
-	now      func() time.Time
+	q            *sqlc.Queries
+	registry     *manjoclient.Registry
+	secrets      secrets.Provider
+	baseURL      string // "" berarti pakai default manjoclient.Client
+	now          func() time.Time
+	pollInterval time.Duration
 }
 
 func NewService(q *sqlc.Queries, registry *manjoclient.Registry, secretProvider secrets.Provider) *Service {
-	return &Service{q: q, registry: registry, secrets: secretProvider, now: time.Now}
+	return &Service{q: q, registry: registry, secrets: secretProvider, now: time.Now, pollInterval: DefaultPollInterval}
+}
+
+// SetPollInterval overrides DefaultPollInterval.
+func (s *Service) SetPollInterval(d time.Duration) {
+	s.pollInterval = d
 }
 
 // NewServiceWithBaseURL is NewService but overrides the Manjo base URL for
@@ -322,6 +332,7 @@ func (s *Service) markQRGenerated(ctx context.Context, transactionID, externalID
 		ReferenceNo:   pgtype.Text{String: resp.ReferenceNo, Valid: true},
 		ExternalID:    pgtype.Text{String: externalID, Valid: true},
 		ExpireAt:      pgtype.Timestamptz{Time: expireAt, Valid: true},
+		NextQueryAt:   pgtype.Timestamptz{Time: s.now().Add(s.pollInterval), Valid: true},
 	})
 	return err
 }

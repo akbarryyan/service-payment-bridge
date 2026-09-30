@@ -313,7 +313,7 @@ type Merchant struct {
 type MqttMessage struct {
 	ID            pgtype.UUID        `json:"id"`
 	Topic         string             `json:"topic"`
-	Payload       []byte             `json:"payload"`
+	Payload       string             `json:"payload"`
 	Direction     MqttDirection      `json:"direction"`
 	Status        MqttMessageStatus  `json:"status"`
 	TransactionID pgtype.Text        `json:"transaction_id"`
@@ -348,4 +348,5 @@ type Transaction struct {
 	PaidAt          pgtype.Timestamptz `json:"paid_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 	DeviceID        string             `json:"device_id"`
+	NextQueryAt     pgtype.Timestamptz `json:"next_query_at"`
 }

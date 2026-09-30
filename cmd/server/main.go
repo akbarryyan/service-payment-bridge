@@ -178,7 +178,7 @@ func publishFailureReply(ctx context.Context, q *sqlc.Queries, logger *slog.Logg
 func logMQTTMessage(ctx context.Context, q *sqlc.Queries, logger *slog.Logger, topic string, payload []byte, direction sqlc.MqttDirection, status sqlc.MqttMessageStatus, transactionID, errMsg string) {
 	params := sqlc.LogMQTTMessageParams{
 		Topic:     topic,
-		Payload:   payload,
+		Payload:   string(payload),
 		Direction: direction,
 		Status:    status,
 	}
