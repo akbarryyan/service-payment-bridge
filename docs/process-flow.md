@@ -13,7 +13,8 @@
 3. [Flow 2 — Token Refresh (Sub-flow)](#3-flow-2--token-refresh-sub-flow)
 4. [Flow 3 — Payment Notification](#4-flow-3--payment-notification)
 5. [Flow 4 — Auto-Expire Job](#5-flow-4--auto-expire-job)
-6. [Ringkasan Data Touchpoint per Tabel](#6-ringkasan-data-touchpoint-per-tabel)
+6. [Flow 5 — Payment Polling](#6-flow-5--payment-polling)
+7. [Ringkasan Data Touchpoint per Tabel](#7-ringkasan-data-touchpoint-per-tabel)
 
 ---
 
@@ -104,29 +105,42 @@ Setiap flow dipecah jadi step bernomor, dengan kolom:
 
 ## 5. Flow 4 — Auto-Expire Job
 
-**Trigger:** Scheduled job berjalan periodik (mis. tiap 1 menit).
-**Berakhir saat:** Semua transaksi yang lewat `expire_at` sudah ditandai `EXPIRED`.
-
-| # | Aktor/Komponen | Aksi | Data Dibaca | Data Ditulis | Validasi/Kondisi | Kalau Gagal |
-|---|---|---|---|---|---|---|
-| 1 | Scheduler (cron/worker) | Trigger job berjalan | — | — | — | — |
-| 2 | Expire Job | Query transaksi kandidat | `transactions` WHERE `status='QR_GENERATED' AND expire_at < now()` (pakai index `idx_transactions_expire_at`) | — | — | — |
-| 3 | Expire Job | Untuk tiap kandidat, update status | — | `transactions`: UPDATE `status='EXPIRED'`, `updated_at=now()` WHERE kondisi step 2 (idealnya dalam satu statement `UPDATE ... WHERE ... RETURNING`, bukan loop per-row, untuk menghindari race dengan Flow 3 step 5 yang pakai row lock) | Transaksi yang di tengah jalan sedang di-lock oleh Flow 3 (notifikasi masuk bersamaan) akan menunggu lock lepas — hasil akhir tetap konsisten (salah satu menang) | — |
-| 4 | Expire Job | Log ringkasan (berapa transaksi di-expire) | — | (opsional) `manjo_api_logs` tidak relevan di sini — cukup structured log aplikasi, bukan tabel DB | — | — |
-
-> **Catatan:** job ini **tidak** mengirim notifikasi MQTT ke Q161 — transaksi yang expired cukup "hilang" dari sisi status internal; kalau merchant butuh generate QR baru, itu jadi transaksi baru lewat Flow 1. Kalau ke depannya dibutuhkan notifikasi "QR expired" ke device, ini perlu ditambahkan sebagai step baru (belum ada di scope v1, lihat `PRD.md` Non-Goals).
+> **Status:** tidak dibangun sebagai job terpisah. Kedaluwarsa ditangani oleh Flow 5:
+> - Selama QR masih berlaku, transaksi dicek ke Manjo tiap 3 detik.
+> - Begitu QR kedaluwarsa (~7,5 menit), Manjo menjawab `403` dengan `responseCode` `4035100`, lalu transaksi ditandai `EXPIRED`.
+> - Kalau query terus gagal, jaring pengaman menandai `EXPIRED` transaksi yang masih `QR_GENERATED` 2 menit setelah `expire_at`.
+>
+> Seperti sebelumnya, kedaluwarsa **tidak** dikirim ke device.
 
 ---
 
-## 6. Ringkasan Data Touchpoint per Tabel
+## 6. Flow 5 — Payment Polling
+
+**Trigger:** Payment Poller di dalam service, tiap 1 detik.
+**Berakhir saat:** Transaksi keluar dari `QR_GENERATED` (`PAID`/`EXPIRED`/`FAILED`/`CANCELLED`/`REFUNDED`). Kalau `PAID`, berakhir saat soundbox memutar pengumuman.
+
+| # | Aktor/Komponen | Aksi | Data Dibaca | Data Ditulis | Validasi/Kondisi | Kalau Gagal |
+|---|---|---|---|---|---|---|
+| 1 | Payment Poller | Klaim ≤20 transaksi yang jatuh tempo | `transactions` WHERE `status='QR_GENERATED' AND next_query_at <= now()` (`FOR UPDATE SKIP LOCKED`) | `transactions.next_query_at = now() + PAYMENT_POLL_INTERVAL` | Satu transaksi tidak pernah diklaim dua instance | Klaim gagal → log, coba lagi detik berikutnya |
+| 2 | Transaction Service | Resolve kredensial merchant lewat `device_id` | `devices`, `merchants`, `tenants` | — | Tetap dicek walau device/merchant `INACTIVE` | Dicatat sebagai query error, dicoba lagi 3 detik kemudian |
+| 3 | Manjo Client | `POST /v1.0/qr/qr-mpm-query` (format collection: tanpa `X-CLIENT-KEY`, `X-PARTNER-ID` = client key, `serviceCode: "47"`) | `transactions.reference_no`, `transaction_id`, `external_id` | `manjo_api_logs` (`QUERY_PAYMENT`), **kecuali** hasil masih pending | — | Timeout/5xx/401/kode tak dikenal → dicoba lagi |
+| 4 | Transaction Service | Petakan hasil dengan **skema Query** (bukan skema Notification) | — | — | `00`→`PAID`; `01`/`02`/`03`→tetap; `05`→`CANCELLED`; `06`→`FAILED`; `04`→`REFUNDED` (anomali); `403`+`4035100`→`EXPIRED` | — |
+| 5 | Transaction Service | Terapkan transisi bersyarat | — | `transactions`: `status`, `manjo_status_code`, `paid_at` (= `paidTime`), `next_query_at = NULL` WHERE `status = 'QR_GENERATED'` | 0 baris berubah → sudah diproses instance lain, berhenti | Error DB → log, dicoba lagi |
+| 6 | Transaction Service (jaring pengaman) | Masih `QR_GENERATED` dan `now() > expire_at + 2 menit` → `EXPIRED` | `transactions.expire_at` | `transactions.status = 'EXPIRED'` | — | — |
+| 7 | Announcer | Hanya kalau baru menjadi `PAID`: susun audio dari `amount`, publish ke `topic_{device_id}` (QoS 1), maksimal 3 percobaan | `transactions.amount`, `device_id` | `mqtt_messages` (OUTBOUND, `PROCESSED`/`FAILED`) | — | Gagal 3× → `mqtt_messages` `FAILED` + log `"announcement failed"` |
+| 8 | Q161 Pro | Putar audio, misalnya "…lima puluh ribu…" | — | — | — | (di luar scope Service) |
+
+---
+
+## 7. Ringkasan Data Touchpoint per Tabel
 
 | Tabel | Ditulis oleh Flow | Dibaca oleh Flow |
 |---|---|---|
 | `merchants` | (tidak ditulis oleh flow runtime — diisi lewat proses onboarding merchant terpisah, di luar scope 4 flow ini) | Flow 1 (step 5, 9, 10), Flow 2 (step 2), Flow 3 (step 3) |
 | `tenants` | (diisi dari luar, di luar scope 4 flow ini) | Flow 1 (step 5, 10) |
 | `devices` | (diisi dari luar, di luar scope 4 flow ini) | Flow 1 (step 5, 10, 13a, 13b), Flow 3 (step 12) |
-| `transactions` | Flow 1 (step 6, 9, 11a/11b, 12b), Flow 3 (step 9), Flow 4 (step 3) | Flow 1 (step 5 — via `devices`, step 13a), Flow 3 (step 5, 6a, 6b, 8, 11, 12 — via `device_id`), Flow 4 (step 2) |
-| `mqtt_messages` | Flow 1 (step 4b, 7, 13a, 13b), Flow 3 (step 12) | (dibaca terpisah saat tracing manual, bukan bagian dari flow otomatis) |
-| `manjo_api_logs` | Flow 1 (step 10, 11a, 11b), Flow 2 (step 3, 4a, 4b), Flow 3 (step 3, 10) | (dibaca terpisah saat tracing manual) |
+| `transactions` | Flow 1 (step 6, 9, 11a/11b, 12b), Flow 3 (step 9), Flow 5 (step 1, 5, 6) | Flow 1 (step 5 — via `devices`, step 13a), Flow 3 (step 5, 6a, 6b, 8, 11, 12 — via `device_id`), Flow 5 (step 1, 3, 6, 7) |
+| `mqtt_messages` | Flow 1 (step 4b, 7, 13a, 13b), Flow 3 (step 12), Flow 5 (step 7) | (dibaca terpisah saat tracing manual, bukan bagian dari flow otomatis) |
+| `manjo_api_logs` | Flow 1 (step 10, 11a, 11b), Flow 2 (step 3, 4a, 4b), Flow 3 (step 3, 10), Flow 5 (step 3) | (dibaca terpisah saat tracing manual) |
 
 Tabel di atas berguna untuk menjawab cepat pertanyaan seperti *"kalau saya mau tahu semua tempat yang menulis ke `transactions`, saya harus cek flow mana saja?"* tanpa perlu membaca ulang seluruh dokumen.

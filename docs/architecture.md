@@ -322,19 +322,22 @@ Gagal: kalimat manusiawi berbahasa Indonesia, contoh: `"Gagal membuat QR, coba l
 
 ### 7.3 Service → Q161 (Payment Notification)
 
-**Topic:** `topic/{merchant_id}/{tenant_slot}/{device_id}` — `tenant_slot` = `tenant_id` asli, atau literal `_` kalau device tanpa tenant
+**Topic:** `"topic_" + device_id`, topic yang sama dengan balasan QR (Section 7.2).
 
-```json
-{
-  "type": "PAYMENT_NOTIFICATION",
-  "transaction_id": "TRX-20260924-000001",
-  "status": "PAID",
-  "amount": 50000,
-  "audio_sequence": "/ext/awal-qris.mp3+/ext/seratus.mp3+/ext/ribu.mp3+/ext/akhir-berhasil.mp3"
-}
+**Payload:** plain text berisi daftar path file audio di device, dipisah `+`. Firmware mengenali payload ini dari substring `.mp3`, lalu memutar tiap file berurutan (`docs/eclipse/src/mqtt.c:87-124`).
+
+Contoh Rp50.000:
+
+```text
+/ext/awal-qris.mp3+/ext/lima.mp3+/ext/puluh.mp3+/ext/ribu.mp3+/ext/akhir-berhasil.mp3
 ```
 
-`audio_sequence` dibangun oleh Transaction Service memakai modul konversi angka→nama-file yang sama seperti di Q181 (prefix `/ext/awal-qris.mp3`, suffix `/ext/akhir-berhasil.mp3`, digabung `+`). Lihat [Section 20](#20-open-decisions) untuk status keputusan format ini.
+Disusun oleh `internal/voice` dari `transactions.amount`:
+- pembuka `awal-qris`;
+- klip nominal (aturan "se-": `sepuluh`/`sebelas`/`seratus`/`seribu`);
+- penutup `akhir-berhasil`, yang sudah mengandung kata "rupiah".
+
+Nama file memakai set `mp3-api` tanpa akhiran `_adr`. Payload ini hanya dikirim untuk transaksi yang menjadi `PAID`. Saat ini pembayaran dideteksi lewat polling Query Payment (`docs/process-flow.md` Flow 5).
 
 ---
 
