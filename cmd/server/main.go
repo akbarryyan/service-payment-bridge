@@ -12,7 +12,6 @@ import (
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
 
@@ -22,6 +21,7 @@ import (
 	"service-payment-bridge/internal/httpserver"
 	"service-payment-bridge/internal/manjoclient"
 	"service-payment-bridge/internal/mqttclient"
+	"service-payment-bridge/internal/mqttlog"
 	"service-payment-bridge/internal/qrtopic"
 	"service-payment-bridge/internal/resolver"
 	"service-payment-bridge/internal/secrets"
@@ -176,19 +176,12 @@ func publishFailureReply(ctx context.Context, q *sqlc.Queries, logger *slog.Logg
 }
 
 func logMQTTMessage(ctx context.Context, q *sqlc.Queries, logger *slog.Logger, topic string, payload []byte, direction sqlc.MqttDirection, status sqlc.MqttMessageStatus, transactionID, errMsg string) {
-	params := sqlc.LogMQTTMessageParams{
-		Topic:     topic,
-		Payload:   string(payload),
-		Direction: direction,
-		Status:    status,
-	}
-	if transactionID != "" {
-		params.TransactionID = pgtype.Text{String: transactionID, Valid: true}
-	}
-	if errMsg != "" {
-		params.ErrorMessage = pgtype.Text{String: errMsg, Valid: true}
-	}
-	if _, err := q.LogMQTTMessage(ctx, params); err != nil {
-		logger.Error("failed to log mqtt_messages", "error", err)
-	}
+	mqttlog.Record(ctx, q, logger, mqttlog.Entry{
+		Topic:         topic,
+		Payload:       payload,
+		Direction:     direction,
+		Status:        status,
+		TransactionID: transactionID,
+		ErrorMessage:  errMsg,
+	})
 }
