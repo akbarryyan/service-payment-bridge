@@ -22,8 +22,8 @@ func ParseEMV(s string) (TLV, error) {
 		}
 		tag := s[i : i+2]
 		n, err := strconv.Atoi(s[i+2 : i+4])
-		if err != nil {
-			return nil, fmt.Errorf("altosim: invalid length for tag %s: %w", tag, err)
+		if err != nil || n < 0 {
+			return nil, fmt.Errorf("altosim: invalid length %q for tag %s", s[i+2:i+4], tag)
 		}
 		start := i + 4
 		if start+n > len(s) {

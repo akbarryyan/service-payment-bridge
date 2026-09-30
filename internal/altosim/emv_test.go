@@ -43,7 +43,7 @@ func TestParseEMV_RealUATQR(t *testing.T) {
 }
 
 func TestParseEMV_RejectsMalformedInput(t *testing.T) {
-	for _, s := range []string{"000", "0005ab", "00X2ab"} {
+	for _, s := range []string{"000", "0005ab", "00X2ab", "01-1Xhello"} {
 		if _, err := ParseEMV(s); err == nil {
 			t.Errorf("ParseEMV(%q) error = nil, want error", s)
 		}
