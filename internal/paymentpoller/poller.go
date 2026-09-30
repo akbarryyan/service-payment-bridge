@@ -94,6 +94,14 @@ func (p *Poller) RunOnce(ctx context.Context) {
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
+			// A panic anywhere in process (bug in the checker, announcer, etc.) must
+			// stay confined to this one transaction — the poller, and the service it
+			// runs in, must never go down because of it (spec §11).
+			defer func() {
+				if r := recover(); r != nil {
+					p.logger.Error("payment check panicked", "transaction_id", tx.TransactionID, "panic", r)
+				}
+			}()
 			p.process(ctx, tx)
 		}()
 	}

@@ -305,3 +305,26 @@ func TestRunOnce_StalePaymentIsNotAnnounced(t *testing.T) {
 		t.Errorf("status = %s, want PAID (the transition itself still happens)", s)
 	}
 }
+
+// panickingChecker is a PaymentChecker test double that always panics, used to prove F3:
+// a panic in one worker must not bring down the whole poller (or the service).
+type panickingChecker struct{}
+
+func (panickingChecker) CheckPayment(ctx context.Context, tx sqlc.Transaction) (*transaction.PaymentCheckResult, error) {
+	panic("boom: simulated panic in payment checker")
+}
+
+func TestRunOnce_RecoversFromWorkerPanic(t *testing.T) {
+	f := setup(t)
+	txID := f.insertQRGenerated(t, time.Now().Add(-time.Second))
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	a := announcer.New(f.publisher, f.q, logger)
+	p := paymentpoller.New(f.q, panickingChecker{}, a, 3*time.Second, logger).OnlyMerchant(testMerchantID)
+
+	p.RunOnce(context.Background())
+
+	if s := f.status(t, txID); s != sqlc.TransactionStatusQRGENERATED {
+		t.Errorf("status = %s, want QR_GENERATED (checker panicked before any transition)", s)
+	}
+}
