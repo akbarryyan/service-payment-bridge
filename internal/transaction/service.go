@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -87,10 +88,7 @@ func (s *Service) GenerateQR(ctx context.Context, device resolver.ResolvedDevice
 		return &GenerateQRResult{TransactionID: transactionID, Status: "FAILED", ErrorCode: errCode, Cause: callErr}, nil
 	}
 
-	expireAt, err := parseExpireDate(resp.AdditionalInfo.ExpireDate, s.now())
-	if err != nil {
-		expireAt = s.now().Add(time.Hour)
-	}
+	expireAt := computeExpireAt(resp.AdditionalInfo, s.now())
 
 	if err := s.markQRGenerated(ctx, transactionID, externalID, resp, expireAt); err != nil {
 		return nil, fmt.Errorf("transaction: failed to persist QR_GENERATED: %w", err)
@@ -311,11 +309,27 @@ func nonRetryableCode(err error) string {
 	return "MANJO_ERROR"
 }
 
-func parseExpireDate(expireDate string, fallbackNow time.Time) (time.Time, error) {
+// fallbackQRValidity is used when Manjo's response carries no usable expiry. It is a bit
+// above the ~7.5 minutes observed in UAT so the poller never stops before the QR expires.
+const fallbackQRValidity = 10 * time.Minute
+
+// computeExpireAt prefers expiryDuration (milliseconds; UAT sends "450000" = 7m30s) over
+// expireDate, which UAT returns 7 hours too late (the WIB offset applied twice).
+func computeExpireAt(info manjoclient.GenerateQRResponseAdditionalInfo, receivedAt time.Time) time.Time {
+	if ms, err := strconv.ParseInt(info.ExpiryDuration, 10, 64); err == nil && ms > 0 {
+		return receivedAt.Add(time.Duration(ms) * time.Millisecond)
+	}
+	if t, err := parseExpireDate(info.ExpireDate); err == nil {
+		return t
+	}
+	return receivedAt.Add(fallbackQRValidity)
+}
+
+func parseExpireDate(expireDate string) (time.Time, error) {
 	loc := time.FixedZone("WIB", 7*60*60)
 	t, err := time.ParseInLocation("20060102150405", expireDate, loc)
 	if err != nil {
-		return fallbackNow, fmt.Errorf("transaction: failed to parse expireDate %q: %w", expireDate, err)
+		return time.Time{}, fmt.Errorf("transaction: failed to parse expireDate %q: %w", expireDate, err)
 	}
 	return t, nil
 }
