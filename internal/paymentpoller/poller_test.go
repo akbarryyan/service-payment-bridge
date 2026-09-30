@@ -47,6 +47,9 @@ func paidAnswerAt(paidTime time.Time) string {
 		paidTime.Format(time.RFC3339))
 }
 
+// expiredAnswer is qr-mpm-query's HTTP 403 answer once the QR has expired.
+const expiredAnswer = `{"responseCode":"4035100","responseMessage":"Transaction Expire"}`
+
 // mockAnswer is one canned qr-mpm-query response: HTTP status plus body.
 type mockAnswer struct {
 	status int
@@ -303,6 +306,25 @@ func TestRunOnce_StalePaymentIsNotAnnounced(t *testing.T) {
 	}
 	if s := f.status(t, txID); s != sqlc.TransactionStatusPAID {
 		t.Errorf("status = %s, want PAID (the transition itself still happens)", s)
+	}
+}
+
+// F7: only a PAID transition announces (spec decision #6). An EXPIRED transition must
+// still move the status but never publish anything to the device.
+func TestRunOnce_ExpiredTransactionIsNotAnnounced(t *testing.T) {
+	f := setup(t)
+	txID := f.insertQRGenerated(t, time.Now().Add(-time.Second))
+	f.setAnswer(http.StatusForbidden, expiredAnswer)
+
+	f.newPoller().RunOnce(context.Background())
+
+	select {
+	case got := <-f.messages:
+		t.Fatalf("unexpected announcement for an expired transaction: %q", got)
+	case <-time.After(2 * time.Second):
+	}
+	if s := f.status(t, txID); s != sqlc.TransactionStatusEXPIRED {
+		t.Errorf("status = %s, want EXPIRED", s)
 	}
 }
 
