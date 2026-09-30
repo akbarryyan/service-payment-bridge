@@ -142,6 +142,21 @@ func (f *fixture) insertQRGenerated(t *testing.T, nextQueryAt time.Time) string 
 	return txID
 }
 
+// insertQRGeneratedNullNextQueryAt inserts a row the way an older binary (or any code
+// path that never set next_query_at) would have left it: due for its first check, but
+// with no schedule at all.
+func (f *fixture) insertQRGeneratedNullNextQueryAt(t *testing.T) string {
+	t.Helper()
+	txID := fmt.Sprintf("POLL-TEST-%d", time.Now().UnixNano())
+	if _, err := f.pool.Exec(context.Background(), `
+		INSERT INTO transactions (transaction_id, merchant_id, device_id, amount, status, reference_no, external_id, expire_at, next_query_at)
+		VALUES ($1, $2, $3, 50000, 'QR_GENERATED', $4, $5, now() + interval '7 minutes', NULL)`,
+		txID, testMerchantID, testDeviceID, "REF-"+txID, "EXT-"+txID); err != nil {
+		t.Fatalf("insert transaction: %v", err)
+	}
+	return txID
+}
+
 func (f *fixture) status(t *testing.T, txID string) sqlc.TransactionStatus {
 	t.Helper()
 	tx, err := f.q.GetTransactionByID(context.Background(), txID)
@@ -215,5 +230,26 @@ func TestRunOnce_SkipsTransactionsNotYetDue(t *testing.T) {
 	}
 	if s := f.status(t, txID); s != sqlc.TransactionStatusQRGENERATED {
 		t.Errorf("status = %s, want QR_GENERATED", s)
+	}
+}
+
+// F1: a row whose next_query_at was never set (e.g. left by an older binary) must still
+// be picked up and announced, not stuck in QR_GENERATED forever.
+func TestRunOnce_NullNextQueryAtIsClaimedAndAnnounced(t *testing.T) {
+	f := setup(t)
+	txID := f.insertQRGeneratedNullNextQueryAt(t)
+
+	f.newPoller().RunOnce(context.Background())
+
+	select {
+	case got := <-f.messages:
+		if got != rp50000Payload {
+			t.Errorf("announcement = %q, want %q", got, rp50000Payload)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no announcement received on topic_" + testDeviceID)
+	}
+	if s := f.status(t, txID); s != sqlc.TransactionStatusPAID {
+		t.Errorf("status = %s, want PAID", s)
 	}
 }

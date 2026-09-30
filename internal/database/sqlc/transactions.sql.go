@@ -13,13 +13,13 @@ import (
 
 const claimDueTransactions = `-- name: ClaimDueTransactions :many
 UPDATE transactions
-SET next_query_at = $1::timestamptz
+SET next_query_at = now() + $1::interval
 WHERE transaction_id IN (
     SELECT t.transaction_id FROM transactions t
     WHERE t.status = 'QR_GENERATED'
-      AND t.next_query_at <= now()
+      AND (t.next_query_at IS NULL OR t.next_query_at <= now())
       AND ($2::varchar IS NULL OR t.merchant_id = $2::varchar)
-    ORDER BY t.next_query_at
+    ORDER BY t.next_query_at NULLS FIRST
     LIMIT $3::int
     FOR UPDATE SKIP LOCKED
 )
@@ -27,17 +27,18 @@ RETURNING id, transaction_id, reference_no, merchant_id, amount, status, manjo_s
 `
 
 type ClaimDueTransactionsParams struct {
-	NextQueryAt pgtype.Timestamptz `json:"next_query_at"`
-	MerchantID  pgtype.Text        `json:"merchant_id"`
-	BatchSize   int32              `json:"batch_size"`
+	PollInterval pgtype.Interval `json:"poll_interval"`
+	MerchantID   pgtype.Text     `json:"merchant_id"`
+	BatchSize    int32           `json:"batch_size"`
 }
 
-// Claims up to batch_size QR_GENERATED transactions whose next check is due and pushes
-// their next check to next_query_at, so a failed or crashed check is retried next time.
+// Claims up to batch_size QR_GENERATED transactions whose next check is due — including
+// rows whose next_query_at was never scheduled (NULL) — and pushes their next check out
+// by poll_interval from the DB clock, so a failed or crashed check is retried next time.
 // SKIP LOCKED keeps two poller instances from claiming the same row. merchant_id NULL
 // means all merchants (tests pass their own merchant to stay off real rows).
 func (q *Queries) ClaimDueTransactions(ctx context.Context, arg ClaimDueTransactionsParams) ([]Transaction, error) {
-	rows, err := q.db.Query(ctx, claimDueTransactions, arg.NextQueryAt, arg.MerchantID, arg.BatchSize)
+	rows, err := q.db.Query(ctx, claimDueTransactions, arg.PollInterval, arg.MerchantID, arg.BatchSize)
 	if err != nil {
 		return nil, err
 	}

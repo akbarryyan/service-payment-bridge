@@ -72,9 +72,9 @@ func (p *Poller) Run(ctx context.Context) {
 // RunOnce claims one batch of due transactions and processes it to completion.
 func (p *Poller) RunOnce(ctx context.Context) {
 	txs, err := p.q.ClaimDueTransactions(ctx, sqlc.ClaimDueTransactionsParams{
-		NextQueryAt: pgtype.Timestamptz{Time: time.Now().Add(p.interval), Valid: true},
-		MerchantID:  pgtype.Text{String: p.merchantID, Valid: p.merchantID != ""},
-		BatchSize:   batchSize,
+		PollInterval: pgtype.Interval{Microseconds: p.interval.Microseconds(), Valid: true},
+		MerchantID:   pgtype.Text{String: p.merchantID, Valid: p.merchantID != ""},
+		BatchSize:    batchSize,
 	})
 	if err != nil {
 		p.logger.Error("payment poll claim failed", "error", err)
