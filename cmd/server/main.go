@@ -15,6 +15,7 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
 
+	"service-payment-bridge/internal/announcer"
 	"service-payment-bridge/internal/config"
 	"service-payment-bridge/internal/database"
 	"service-payment-bridge/internal/database/sqlc"
@@ -22,6 +23,7 @@ import (
 	"service-payment-bridge/internal/manjoclient"
 	"service-payment-bridge/internal/mqttclient"
 	"service-payment-bridge/internal/mqttlog"
+	"service-payment-bridge/internal/paymentpoller"
 	"service-payment-bridge/internal/qrtopic"
 	"service-payment-bridge/internal/resolver"
 	"service-payment-bridge/internal/secrets"
@@ -66,6 +68,7 @@ func main() {
 	deviceResolver := resolver.New(q)
 	registry := manjoclient.NewRegistry()
 	txService := transaction.NewServiceWithBaseURL(q, registry, secrets.EnvProvider{}, cfg.ManjoBaseURL)
+	txService.SetPollInterval(cfg.PaymentPollInterval)
 
 	mqttClient, err := mqttclient.Connect(cfg.MQTTBrokerURL, cfg.MQTTUsername, cfg.MQTTPassword)
 	if err != nil {
@@ -80,6 +83,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	poller := paymentpoller.New(q, txService, announcer.New(mqttClient, q, logger), cfg.PaymentPollInterval, logger)
+	pollCtx, stopPolling := context.WithCancel(context.Background())
+	pollerDone := make(chan struct{})
+	go func() {
+		defer close(pollerDone)
+		poller.Run(pollCtx)
+	}()
+
 	e := echo.New()
 	e.HideBanner = true
 	e.GET("/healthz", httpserver.HealthzHandler(pool))
@@ -91,7 +102,7 @@ func main() {
 		}
 	}()
 
-	logger.Info("service started", "port", cfg.HTTPPort)
+	logger.Info("service started", "port", cfg.HTTPPort, "payment_poll_interval", cfg.PaymentPollInterval.String())
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
@@ -102,6 +113,14 @@ func main() {
 	defer shutdownCancel()
 	if err := e.Shutdown(shutdownCtx); err != nil {
 		logger.Error("http server shutdown error", "error", err)
+	}
+
+	// Let the batch in flight finish (and announce) before the MQTT client disconnects.
+	stopPolling()
+	select {
+	case <-pollerDone:
+	case <-shutdownCtx.Done():
+		logger.Error("payment poller did not finish before the shutdown timeout")
 	}
 }
 

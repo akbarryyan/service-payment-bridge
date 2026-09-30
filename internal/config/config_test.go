@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestLoad_RequiredFieldsPresent(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
@@ -22,6 +25,9 @@ func TestLoad_RequiredFieldsPresent(t *testing.T) {
 	if cfg.LogLevel != "info" {
 		t.Errorf("LogLevel default = %q, want %q", cfg.LogLevel, "info")
 	}
+	if cfg.PaymentPollInterval != 3*time.Second {
+		t.Errorf("PaymentPollInterval default = %v, want 3s", cfg.PaymentPollInterval)
+	}
 }
 
 func TestLoad_MissingRequiredField(t *testing.T) {
@@ -30,5 +36,19 @@ func TestLoad_MissingRequiredField(t *testing.T) {
 	_, err := Load()
 	if err == nil {
 		t.Fatal("Load() expected error for missing DATABASE_URL, got nil")
+	}
+}
+
+func TestLoad_PaymentPollIntervalOverride(t *testing.T) {
+	t.Setenv("DATABASE_URL", "postgres://user:pass@localhost:5432/db")
+	t.Setenv("MQTT_BROKER_URL", "tcp://localhost:1883")
+	t.Setenv("PAYMENT_POLL_INTERVAL", "5s")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+	if cfg.PaymentPollInterval != 5*time.Second {
+		t.Errorf("PaymentPollInterval = %v, want 5s", cfg.PaymentPollInterval)
 	}
 }

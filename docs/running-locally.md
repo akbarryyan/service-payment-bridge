@@ -130,6 +130,13 @@ Biarkan terminal ini terbuka. Service berjalan selama terminal hidup, dan `Ctrl+
 | `"generate QR failed"` | Generate QR gagal. Lihat field `error_code` dan `cause` |
 | `"device resolve failed"` | `device_id` dari device tidak ada di tabel `devices`, atau device/merchant/tenant `INACTIVE` |
 | `"invalid GENERATE_QR payload"` | Payload dari device tidak sesuai format `"{device_id}\|{amount_sen}"` |
+| `"payment detected"` | Poller menemukan transaksi yang sudah dibayar (`status` → `PAID`), lalu mengirim pengumuman audio ke device |
+| `"announcement failed"` | Pengumuman audio gagal dikirim ke broker setelah 3 percobaan. Transaksi tetap `PAID` |
+| `"transaction expired"` | QR kedaluwarsa. `via: "manjo"` = dijawab Manjo, `via: "deadline"` = jaring pengaman (2 menit lewat `expire_at`) |
+| `"payment query failed"` | Query status ke Manjo gagal atau jawabannya tidak dikenal. Otomatis dicoba lagi 3 detik kemudian |
+| `"amount mismatch"` | Nominal dari Manjo berbeda dengan nominal transaksi. Pengumuman tetap memakai nominal transaksi |
+
+Setelah generate QR, service mengecek status pembayaran ke Manjo tiap `PAYMENT_POLL_INTERVAL` (default `3s`, di `.env`) sampai QR dibayar atau kedaluwarsa (~7,5 menit). Begitu dibayar, soundbox membunyikan nominalnya.
 
 Cek service hidup:
 
@@ -169,6 +176,19 @@ docker compose exec postgres psql -U payment_bridge -d payment_bridge -c \
 
 Di `manjo_api_logs`, baris `ACCESS_TOKEN` memang tidak punya `transaction_id`, karena satu token dipakai untuk banyak transaksi. Nilai `accessToken` di `response_body` selalu tersamarkan (`***`).
 
+Baris `QUERY_PAYMENT` hanya dicatat untuk hasil yang bukan "masih pending" (dibayar, kedaluwarsa, error), supaya log tidak dibanjiri ratusan poll per QR.
+
+Transaksi yang sudah `PAID` tapi pengumumannya tidak pernah terkirim (kasus "sudah bayar tapi soundbox diam"):
+
+```bash
+docker compose exec postgres psql -U payment_bridge -d payment_bridge -c \
+  "SELECT t.transaction_id, t.device_id, t.amount, t.paid_at FROM transactions t
+   WHERE t.status = 'PAID' AND NOT EXISTS (
+     SELECT 1 FROM mqtt_messages m WHERE m.transaction_id = t.transaction_id
+       AND m.direction = 'OUTBOUND' AND m.status = 'PROCESSED' AND m.payload LIKE '%.mp3%')
+   ORDER BY t.paid_at DESC;"
+```
+
 ---
 
 ## 7. Menjalankan Test
@@ -179,7 +199,7 @@ Test integrasi memakai Postgres dan Mosquitto asli, jadi stack Docker harus jala
 go test ./...
 ```
 
-> **Matikan dulu `go run ./cmd/server` sebelum menjalankan test.** `TestGenerateQRFlow_EndToEnd` subscribe ke `qris/request`, topic yang sama dipakai bersama dengan server. Kalau server sedang hidup, server ikut menjawab request test dengan `"Gagal membuat QR, coba lagi"` lebih dulu, dan test gagal walaupun kodenya benar.
+> **Matikan dulu `go run ./cmd/server` sebelum menjalankan test.** Server subscribe ke `qris/request` (topic yang sama dengan `TestGenerateQRFlow_EndToEnd`) dan menjalankan poller pembayaran di DB yang sama dengan test. Kalau server hidup, server bisa menjawab request test lebih dulu atau mengklaim transaksi test, sehingga test gagal walaupun kodenya benar.
 
 Test yang memanggil Manjo UAT sungguhan secara default di-skip. Untuk menjalankannya (butuh `.env.sandbox` terisi, dan membuat transaksi sungguhan di UAT):
 
