@@ -19,3 +19,14 @@ FROM devices d
 JOIN merchants m ON m.merchant_id = d.merchant_id
 LEFT JOIN tenants t ON t.tenant_id = d.tenant_id
 WHERE d.device_id = $1;
+
+-- name: GetDevice :one
+SELECT * FROM devices WHERE device_id = $1;
+
+-- name: CreateDevice :one
+INSERT INTO devices (device_id, merchant_id, tenant_id, mqtt_topic, manjo_store_id, manjo_terminal_id)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING *;
+
+-- name: SetDeviceStatus :exec
+UPDATE devices SET status = $2, updated_at = now() WHERE device_id = $1;

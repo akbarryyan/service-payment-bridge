@@ -40,8 +40,8 @@ Setiap flow dipecah jadi step bernomor, dengan kolom:
 
 | # | Aktor/Komponen | Aksi | Data Dibaca | Data Ditulis | Validasi/Kondisi | Kalau Gagal |
 |---|---|---|---|---|---|---|
-| 1 | Q161 Pro | Publish MQTT ke `qris/request` (topic tetap, shared semua device), payload `"{device_id}\|{amount_sen}"` misal `"MT58530503\|5000000"` | — | — | — | (di luar scope Service) |
-| 2 | MQTT Consumer | Terima pesan dari `qris/request` | — | — | — | — |
+| 1 | Q161 Pro | Publish MQTT ke `qris/request/{merchantId}/{SN}` (topic per alat), payload `"{SN}\|{amount_sen}"` misal topic `qris/request/MT58530503/00078020709` dengan payload `"00078020709\|5000000"` | — | — | — | (di luar scope Service) |
+| 2 | MQTT Consumer | Terima pesan dari `qris/request/+/+`; ambil `merchantId` dan `SN` dari topic | — | — | Topic 4 segmen; SN payload = SN topic; SN terdaftar di merchant topic | `IDENTITY_MISMATCH` → catat `mqtt_messages` FAILED, **tidak dibalas** |
 | 3 | Message Parser | Parse payload pipe-delimited → `{device_id, amount_rupiah}` (`amount_sen / 100`) | — | — | Ada tepat satu `\|`; `device_id` tidak kosong; `amount_sen` integer positif | Reject → lanjut ke step 4b |
 | 4a | Message Validator | Validasi: `amount > 0`, format sesuai skema | — | — | Amount integer positif | — |
 | 4b | Message Validator (invalid path) | Catat pesan invalid | — | `mqtt_messages`: INSERT (`direction=INBOUND`, `status=FAILED`, `error_message`, `transaction_id=NULL`) | — | **Flow berhenti di sini** — tidak diteruskan ke Manjo |
@@ -56,8 +56,8 @@ Setiap flow dipecah jadi step bernomor, dengan kolom:
 | 11c | Manjo Client (query fallback pasca-`409`) | `POST /v1.0/qr/qr-mpm-query` | `merchants.manjo_client_secret_ref` (secret untuk signature Query) | `manjo_api_logs`: INSERT (`direction=OUTBOUND`, `operation=QUERY_PAYMENT`, `endpoint`, `request_body` *(signature di-mask)*, `transaction_id`) | Header `X-CLIENT-KEY` + `Authorization` Bearer wajib dua-duanya (beda dari generate QR) | Query gagal/timeout → treat seperti percobaan generate QR gagal, lanjut ke batas retry step 11b |
 | 12a | Transaction Service | Transaksi berhasil punya QR | — | (sudah ter-update di step 11a) | — | — |
 | 12b | Transaction Service | Semua percobaan gagal | — | `transactions`: UPDATE `status='FAILED'` | — | — |
-| 13a | MQTT Publisher | Build payload `"QR:{qris_payload}"`, publish ke `"topic_" + device_id` | `transactions` (data yang baru di-update) | `mqtt_messages`: INSERT (`direction=OUTBOUND`, `status=PROCESSED`, `transaction_id`) | — | Kalau publish gagal → catat `FAILED` di `mqtt_messages` (tidak mengubah status transaksi) |
-| 13b | MQTT Publisher (kasus gagal) | Build pesan plain text manusiawi (mis. `"Gagal membuat QR, coba lagi"`), publish ke `"topic_" + device_id` | — | `mqtt_messages`: INSERT (`direction=OUTBOUND`, `transaction_id`) | — | — |
+| 13a | MQTT Publisher | Build payload `"QR:{qris_payload}"`, publish ke `topic/{merchantId}/{SN}` | `transactions` (data yang baru di-update) | `mqtt_messages`: INSERT (`direction=OUTBOUND`, `status=PROCESSED`, `transaction_id`) | — | Kalau publish gagal → catat `FAILED` di `mqtt_messages` (tidak mengubah status transaksi) |
+| 13b | MQTT Publisher (kasus gagal) | Build pesan plain text manusiawi (mis. `"Gagal membuat QR, coba lagi"`), publish ke `topic/{merchantId}/{SN}` | — | `mqtt_messages`: INSERT (`direction=OUTBOUND`, `transaction_id`) | — | — |
 | 14 | Q161 Pro | Terima `qris_payload`, render jadi gambar QR, tampilkan | — | — | — | (di luar scope Service) |
 
 ---
@@ -98,7 +98,7 @@ Setiap flow dipecah jadi step bernomor, dengan kolom:
 | 9 | Transaction Service | Update transaksi | — | `transactions`: UPDATE `status`, `manjo_status_code=latestTransactionStatus`, `paid_at=now()` (khusus kalau jadi `PAID`), `updated_at=now()` | — | — |
 | 10 | Notification HTTP Endpoint | Balas `200 OK` ke Manjo **segera** (tidak menunggu step 11-13) | — | `manjo_api_logs.http_status=200`, `response_body` (UPDATE record step 3) | Response harus cepat supaya Manjo tidak timeout | — |
 | 11 | `internal/voice` | Kalau status baru = `PAID`: konversi `amount` (dari `additionalInfo.amountTrx`, dikonversi balik ke integer Rupiah) jadi payload plain-text daftar path audio dipisah `+` (format final, lihat `architecture.md` Section 7.3) | `transactions.amount` (atau ambil dari payload notifikasi) | — | Hanya jalan kalau status final `PAID`/`FAILED` (bukan `PENDING`) | — |
-| 12 | `internal/announcer` | Publish payload audio (dari step 11) ke topic `"topic_" + device_id` — dihitung dari `transactions.device_id`, **bukan** lookup `devices.mqtt_topic` | `transactions.device_id` | `mqtt_messages`: INSERT (`direction=OUTBOUND`, `status=PROCESSED`/`FAILED`, `transaction_id`) | Publish gagal → dicoba ulang maksimal 3 kali dengan jeda 1 detik | Publish tetap gagal setelah retry → dicatat `FAILED` di `mqtt_messages`, **tidak** mempengaruhi response yang sudah dikirim ke Manjo di step 10. **Catatan:** routing selalu lewat `transactions.device_id` internal, **tidak pernah** dari field Manjo (Payment Notification tidak konsisten membawa info tenant/device) |
+| 12 | `internal/announcer` | Publish payload audio (dari step 11) ke topic `topic/{merchantId}/{SN}` — `SN` dari `transactions.device_id`, `merchantId` = merchant ID Manjo milik alat (lewat `devices` → `merchants`) | `transactions.device_id` | `mqtt_messages`: INSERT (`direction=OUTBOUND`, `status=PROCESSED`/`FAILED`, `transaction_id`) | Publish gagal → dicoba ulang maksimal 3 kali dengan jeda 1 detik | Publish tetap gagal setelah retry → dicatat `FAILED` di `mqtt_messages`, **tidak** mempengaruhi response yang sudah dikirim ke Manjo di step 10. **Catatan:** routing selalu lewat `transactions.device_id` internal, **tidak pernah** dari field Manjo (Payment Notification tidak konsisten membawa info tenant/device) |
 | 13 | Q161 Pro | Terima notifikasi, mainkan audio sesuai `audio_sequence` | — | — | — | (di luar scope Service) |
 
 ---
@@ -127,7 +127,7 @@ Setiap flow dipecah jadi step bernomor, dengan kolom:
 | 4 | Transaction Service | Petakan hasil dengan **skema Query** (bukan skema Notification) | — | — | `00`→`PAID`; `01`/`02`/`03`→tetap; `05`→`CANCELLED`; `06`→`FAILED`; `04`→`REFUNDED` (anomali); `403`+`4035100`→`EXPIRED` | — |
 | 5 | Transaction Service | Terapkan transisi bersyarat | — | `transactions`: `status`, `manjo_status_code`, `paid_at` (= `paidTime`), `next_query_at = NULL` WHERE `status = 'QR_GENERATED'` | 0 baris berubah → sudah diproses instance lain, berhenti | Error DB → log, dicoba lagi |
 | 6 | Transaction Service (jaring pengaman) | Masih `QR_GENERATED` dan `now() > expire_at + 2 menit` → `EXPIRED` | `transactions.expire_at` | `transactions.status = 'EXPIRED'` | — | — |
-| 7 | Announcer | Hanya kalau baru menjadi `PAID`: susun audio dari `amount`, publish ke `topic_{device_id}` (QoS 1), maksimal 3 percobaan | `transactions.amount`, `device_id` | `mqtt_messages` (OUTBOUND, `PROCESSED`/`FAILED`) | — | Gagal 3× → `mqtt_messages` `FAILED` + log `"announcement failed"` |
+| 7 | Announcer | Hanya kalau baru menjadi `PAID`: susun audio dari `amount`, publish ke `topic/{merchantId}/{SN}` (QoS 1), maksimal 3 percobaan | `transactions.amount`, `device_id` | `mqtt_messages` (OUTBOUND, `PROCESSED`/`FAILED`) | — | Gagal 3× → `mqtt_messages` `FAILED` + log `"announcement failed"` |
 | 8 | Q161 Pro | Putar audio, misalnya "…lima puluh ribu…" | — | — | — | (di luar scope Service) |
 
 ---

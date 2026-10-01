@@ -1,6 +1,9 @@
 package validation
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestParseGenerateQRMessage_Valid(t *testing.T) {
 	msg, err := ParseGenerateQRMessage([]byte("MT58530503|5000000"))
@@ -65,5 +68,28 @@ func TestParseGenerateQRMessage_NegativeAmount(t *testing.T) {
 	_, err := ParseGenerateQRMessage([]byte("MT58530503|-100"))
 	if err == nil {
 		t.Fatal("expected error for negative amount, got nil")
+	}
+}
+
+func TestCheckRequestIdentity(t *testing.T) {
+	tests := []struct {
+		name                                           string
+		topicMerchant, topicSN, payloadSN, devMerchant string
+		wantErr                                        bool
+	}{
+		{"matching", "MT1", "SN1", "SN1", "MT1", false},
+		{"payload names another device", "MT1", "SN1", "SN2", "MT1", true},
+		{"device belongs to another merchant", "MT1", "SN1", "SN1", "MT2", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := CheckRequestIdentity(tt.topicMerchant, tt.topicSN, tt.payloadSN, tt.devMerchant)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("CheckRequestIdentity() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err != nil && !errors.Is(err, ErrIdentityMismatch) {
+				t.Errorf("error %v is not ErrIdentityMismatch", err)
+			}
+		})
 	}
 }

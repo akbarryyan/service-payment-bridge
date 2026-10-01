@@ -11,6 +11,68 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createDevice = `-- name: CreateDevice :one
+INSERT INTO devices (device_id, merchant_id, tenant_id, mqtt_topic, manjo_store_id, manjo_terminal_id)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, device_id, merchant_id, tenant_id, mqtt_topic, manjo_store_id, manjo_terminal_id, status, created_at, updated_at
+`
+
+type CreateDeviceParams struct {
+	DeviceID        string      `json:"device_id"`
+	MerchantID      string      `json:"merchant_id"`
+	TenantID        pgtype.Text `json:"tenant_id"`
+	MqttTopic       string      `json:"mqtt_topic"`
+	ManjoStoreID    pgtype.Text `json:"manjo_store_id"`
+	ManjoTerminalID pgtype.Text `json:"manjo_terminal_id"`
+}
+
+func (q *Queries) CreateDevice(ctx context.Context, arg CreateDeviceParams) (Device, error) {
+	row := q.db.QueryRow(ctx, createDevice,
+		arg.DeviceID,
+		arg.MerchantID,
+		arg.TenantID,
+		arg.MqttTopic,
+		arg.ManjoStoreID,
+		arg.ManjoTerminalID,
+	)
+	var i Device
+	err := row.Scan(
+		&i.ID,
+		&i.DeviceID,
+		&i.MerchantID,
+		&i.TenantID,
+		&i.MqttTopic,
+		&i.ManjoStoreID,
+		&i.ManjoTerminalID,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getDevice = `-- name: GetDevice :one
+SELECT id, device_id, merchant_id, tenant_id, mqtt_topic, manjo_store_id, manjo_terminal_id, status, created_at, updated_at FROM devices WHERE device_id = $1
+`
+
+func (q *Queries) GetDevice(ctx context.Context, deviceID string) (Device, error) {
+	row := q.db.QueryRow(ctx, getDevice, deviceID)
+	var i Device
+	err := row.Scan(
+		&i.ID,
+		&i.DeviceID,
+		&i.MerchantID,
+		&i.TenantID,
+		&i.MqttTopic,
+		&i.ManjoStoreID,
+		&i.ManjoTerminalID,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getDeviceWithMerchantAndTenant = `-- name: GetDeviceWithMerchantAndTenant :one
 SELECT
     d.device_id,
@@ -73,4 +135,18 @@ func (q *Queries) GetDeviceWithMerchantAndTenant(ctx context.Context, deviceID s
 		&i.TenantActiveStatus,
 	)
 	return i, err
+}
+
+const setDeviceStatus = `-- name: SetDeviceStatus :exec
+UPDATE devices SET status = $2, updated_at = now() WHERE device_id = $1
+`
+
+type SetDeviceStatusParams struct {
+	DeviceID string         `json:"device_id"`
+	Status   MerchantStatus `json:"status"`
+}
+
+func (q *Queries) SetDeviceStatus(ctx context.Context, arg SetDeviceStatusParams) error {
+	_, err := q.db.Exec(ctx, setDeviceStatus, arg.DeviceID, arg.Status)
+	return err
 }

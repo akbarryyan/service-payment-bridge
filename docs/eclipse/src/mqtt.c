@@ -173,8 +173,8 @@ void mQTTMainThread(void)
 	data.willFlag          = 0;
 	data.MQTTVersion 	   = 4; // 3.1.1
 	data.clientID.cstring  = G_sys_param.mqtt_client_id;
-	data.username.cstring  = "";
-	data.password.cstring  = "";
+	data.username.cstring  = G_mqttUser;
+	data.password.cstring  = G_mqttPass;
 	data.keepAliveInterval = G_sys_param.mqtt_keepalive;
 	// cleansession 0 supaya broker menyimpan sesi perangkat ini dan mengantre pesan QoS 1
 	// selama soundbox mati atau kehilangan jaringan, lalu mengirimkannya saat tersambung
@@ -193,7 +193,7 @@ void mQTTMainThread(void)
 		return;
 	}
 
-	ret = MQTTSubscribe(&c, G_sys_param.mqtt_topic, G_sys_param.mqtt_qos, onTopicMessageArrived);
+	ret = MQTTSubscribe(&c, G_deviceTopic, G_sys_param.mqtt_qos, onTopicMessageArrived);
 	if (ret != 0)
 	{
 		LogPrintWithRet(1, "!!! MQTTSubscribe() failed(%d) !!!", ret);
@@ -219,7 +219,7 @@ void mQTTMainThread(void)
 		}
 
 		// Permintaan QRIS dari utas menu diterbitkan di sini, bukan di utas itu sendiri:
-		// MQTTClient hanya boleh disentuh satu utas. Formatnya "<merchant id>|<nominal sen>",
+		// MQTTClient hanya boleh disentuh satu utas. Formatnya "<SN>|<nominal sen>",
 		// teks polos seperti payload lain di jalur ini.
 		if (G_qrisReqPending)
 		{
@@ -229,7 +229,7 @@ void mQTTMainThread(void)
 			G_qrisReqPending = 0;
 
 			memset(req, 0, sizeof(req));
-			snprintf(req, sizeof(req), "%s|%ld", MQTT_MERCHANT_ID, G_qrisReqAmount);
+			snprintf(req, sizeof(req), "%s|%ld", G_sys_param.sn, G_qrisReqAmount);
 
 			memset(&msg, 0, sizeof(msg));
 			msg.qos        = QOS1;
@@ -237,8 +237,8 @@ void mQTTMainThread(void)
 			msg.payload    = req;
 			msg.payloadlen = strlen(req);
 
-			ret = MQTTPublish(&c, QRIS_REQUEST_TOPIC, &msg);
-			MAINLOG_L1("MQTTPublish(%s, %s) = %d", QRIS_REQUEST_TOPIC, req, ret);
+			ret = MQTTPublish(&c, G_requestTopic, &msg);
+			MAINLOG_L1("MQTTPublish(%s, %s) = %d", G_requestTopic, req, ret);
 
 			if (ret < 0) {
 				LogPrintWithRet(1, "!!! MQTTPublish() failed(%d) !!!", ret);

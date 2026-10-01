@@ -99,7 +99,7 @@ Dua fungsi inti sistem:
 │                      PAYMENT BRIDGE SERVICE                           │
 │                                                                       │
 │  ┌─────────────────┐                                                 │
-│  │  MQTT Consumer   │  subscribe topic_+  (wildcard semua merchant)  │
+│  │  MQTT Consumer   │  subscribe qris/request/+/+  (semua alat)     │
 │  └────────┬─────────┘                                                 │
 │           │                                                           │
 │           ▼                                                           │
@@ -120,7 +120,7 @@ Dua fungsi inti sistem:
 │                              │  ├ Token Manager  │         └────────┬───────┘
 │                              │  ├ Signature      │                  │
 │                              │  │  Builder        │                  ▼
-│                              │  └ Request Builder│         devices.mqtt_topic
+│                              │  └ Request Builder│         topic/{merchantId}/{SN}
 │                              └────────┬──────────┘
 │                                       │ HTTPS
 │  ┌──────────────────────────┐        │
@@ -141,8 +141,8 @@ Dua fungsi inti sistem:
 
 ### 4.1 MQTT Consumer
 
-- Subscribe sekali ke topic tetap `qris/request` — **shared** oleh semua device, bukan wildcard per-merchant (firmware publish semua request ke topic yang sama; lihat `docs/eclipse/src/mqtt.c:236`, `inc/def.h:36`).
-- `device_id` datang dari payload (lihat Section 7.1), bukan dari nama topic.
+- Subscribe sekali ke wildcard `qris/request/+/+` (hanya akun `payment-bridge` yang boleh). Firmware menerbitkan ke `qris/request/{merchantId}/{SN}` — satu topic per alat.
+- `merchantId` dan `SN` diambil dari nama topic; SN di payload (Section 7.1) harus sama dengan SN di topic, dan SN harus terdaftar di merchant tersebut. Kalau tidak cocok: dicatat `FAILED` `IDENTITY_MISMATCH` dan **tidak dibalas**.
 - Teruskan raw payload ke Message Parser.
 - **Tidak** melakukan validasi bisnis — murni transport layer.
 
@@ -183,7 +183,7 @@ Lihat detail lengkap di `brainstorm-q161-updated.md` Section 13. Ringkasan sub-k
 ### 4.7 MQTT Publisher
 
 - Terima payload internal dari Transaction Service (hasil generate QR atau hasil update payment).
-- Serialize ke format final ([Section 7](#7-kontrak-internal-q161--service)) dan publish ke `"topic_" + device_id` (`internal/qrtopic.BuildDeviceTopic`), dihitung langsung dari `device_id` — **bukan** hasil parsing topic request masuk (topic inbound sekarang shared, tidak per-device lagi).
+- Serialize ke format final ([Section 7](#7-kontrak-internal-q161--service)) dan publish ke `topic/{merchantId}/{SN}` (`internal/qrtopic.DeviceTopic`); `merchantId` = merchant ID Manjo milik alat, `SN` = `device_id`.
 - Kalau publish gagal (broker down), masuk ke retry queue terpisah — **tidak boleh memblokir** response HTTP ke Manjo di jalur notification.
 
 ### 4.8 Notification HTTP Endpoint
@@ -209,7 +209,7 @@ Merchant          Q161 Pro         MQTT Broker      Payment Bridge          Manj
    │ Input Rp50.000  │                  │                  │                  │
    │────────────────▶│                  │                  │                  │
    │                 │ publish          │                  │                  │
-   │                 │ topic_{mid}      │                  │                  │
+   │                 │ qris/request/{mid}/{SN} │                  │                  │
    │                 │ {amount:50000}   │                  │                  │
    │                 │─────────────────▶│                  │                  │
    │                 │                  │ forward          │                  │
@@ -233,7 +233,7 @@ Merchant          Q161 Pro         MQTT Broker      Payment Bridge          Manj
    │                 │                  │                  │ status=QR_GENERATED
    │                 │                  │                  │ save reference_no, qris_payload
    │                 │                  │ publish          │                  │
-   │                 │                  │ topic_{mid}      │                  │
+   │                 │                  │ topic/{mid}/{SN} │                  │
    │                 │                  │ {qris_payload}   │                  │
    │                 │◀─────────────────│◀─────────────────│                  │
    │                 │ render QR image  │                  │                  │
@@ -273,7 +273,7 @@ Customer        Manjo           Payment Bridge        MQTT Broker      Q161 Pro 
    │               │                    │                   │              │             │
    │               │                    │ build audio payload (.mp3 list)  │             │
    │               │                    │ publish            │              │             │
-   │               │                    │ topic_{mid}        │              │             │
+   │               │                    │ topic/{mid}/{SN}   │              │             │
    │               │                    │──────────────────▶│              │             │
    │               │                    │                   │─────────────▶│             │
    │               │                    │                   │              │ play audio  │
@@ -297,22 +297,22 @@ Customer        Manjo           Payment Bridge        MQTT Broker      Q161 Pro 
 
 ### 7.1 Q161 → Service (Request Generate QR)
 
-**Topic:** `qris/request` — tetap, shared oleh semua device (bukan per-device)
+**Topic:** `qris/request/{merchantId}/{SN}` — satu topic per alat; ACL broker hanya mengizinkan alat itu sendiri menerbitkan ke sini
 
 **Payload:** plain text, pipe-delimited: `"{device_id}|{amount_sen}"`
 
-Contoh: `"MT58530503|5000000"` (device `MT58530503`, Rp50.000 = 5.000.000 sen)
+Contoh: topic `qris/request/MT58530503/00078020709`, payload `"00078020709|5000000"` (merchant `MT58530503`, device SN `00078020709`, Rp50.000 = 5.000.000 sen)
 
 | Bagian | Wajib | Keterangan |
 |---|---|---|
-| `device_id` | Ya | String sebelum `\|` — identitas device, dipakai Device Resolver |
+| `device_id` | Ya | String sebelum `\|` — identitas device, dipakai Device Resolver = SN hardware alat, harus sama dengan {SN} di topic |
 | `amount_sen` | Ya | Integer, Rupiah × 100 (firmware kirim dalam sen) |
 
 `transaction_id` **tidak dikirim device** — digenerate Service saat menerima pesan ini, format: `TRX-{yyyyMMdd}-{sequence}`.
 
 ### 7.2 Service → Q161 (Hasil Generate QR)
 
-**Topic:** `"topic_" + device_id` (dihitung dari `device_id`, bukan lookup `devices.mqtt_topic`)
+**Topic:** `topic/{merchantId}/{SN}` (merchantId = merchant ID Manjo milik alat)
 
 **Payload:** plain text — firmware tidak punya skema JSON untuk balasan, hanya mengenali prefix `QR:` untuk sukses; apa pun selain itu jatuh ke TTS generik (`AppPlayTip`).
 
@@ -322,7 +322,7 @@ Gagal: kalimat manusiawi berbahasa Indonesia, contoh: `"Gagal membuat QR, coba l
 
 ### 7.3 Service → Q161 (Payment Notification)
 
-**Topic:** `"topic_" + device_id`, topic yang sama dengan balasan QR (Section 7.2).
+**Topic:** `topic/{merchantId}/{SN}`, topic yang sama dengan balasan QR (Section 7.2).
 
 **Payload:** plain text berisi daftar path file audio di device, dipisah `+`. Firmware mengenali payload ini dari substring `.mp3`, lalu memutar tiap file berurutan (`docs/eclipse/src/mqtt.c:87-124`).
 
@@ -559,7 +559,7 @@ Lihat tabel lengkap di `brainstorm-q161-updated.md` Section 21.
 1. **Kredensial Manjo** (private key RSA, client secret) disimpan di secret manager (mis. AWS Secrets Manager / HashiCorp Vault / environment variable terenkripsi) — **bukan** plaintext di database atau source code.
 2. **Access token** hanya di-cache in-memory, tidak pernah di-log penuh, tidak disimpan ke database.
 3. **Webhook Manjo → Service** wajib HTTPS, dan setiap request wajib diverifikasi `X-SIGNATURE` sebelum payload dipercaya.
-4. **MQTT Broker**: gunakan TLS + autentikasi per-device (username/password atau client cert per Q161), supaya device lain tidak bisa publish/subscribe ke topic merchant yang bukan miliknya.
+4. **MQTT Broker**: milik service ini sendiri (Q161 Pro tidak lewat gatebymanjo), memakai Mosquitto **Dynamic Security** — tidak ada klien anonim. Setiap alat punya akun `{merchantId}-{SN}` dan role sendiri yang hanya boleh membaca `topic/{merchantId}/{SN}` dan menerbitkan ke `qris/request/{merchantId}/{SN}`; backend (`payment-bridge`) membaca semua request dan menulis ke topic alat. Alat terhubung lewat TLS (`ssl=1`); akun didaftarkan dengan `go run ./cmd/provision`. Backend juga memeriksa SN di payload = SN di topic dan SN terdaftar di merchant tersebut (`IDENTITY_MISMATCH`). Detail: `docs/superpowers/specs/2026-09-30-q161-device-auth-design.md`.
 5. **Endpoint webhook** sebaiknya dibatasi (IP allowlist dari Manjo, kalau Manjo menyediakan daftar IP resmi) sebagai lapisan tambahan di luar signature verification.
 6. Log request/response Manjo (`manjo_api_logs`) **wajib mask** field sensitif (`X-SIGNATURE`, `accessToken`, private key) — jangan pernah log nilai penuh.
 

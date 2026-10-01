@@ -6,6 +6,7 @@
 #include <poslib.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 #include <Q161Func_From_Devlib.h>
 
 SYS_PARAM G_sys_param;
@@ -37,21 +38,98 @@ static void readSN(char *sn)
 	LogPrintInfo(sn);
 }
 
-// Pengaturan MQTT ditentukan firmware, bukan berkas parameter di perangkat. Dipanggil di kedua
-// cabang initParam supaya nilainya sama apakah berkas tersimpan ada atau tidak.
+char G_mqttMerchant[32];
+char G_mqttUser[64];
+char G_mqttPass[64];
+char G_deviceTopic[96];
+char G_requestTopic[96];
+
+// Menerapkan satu baris "kunci=nilai" dari MQTT_CFG_FILE. Kunci yang tidak dikenal sengaja
+// diabaikan supaya berkas lama tetap terbaca ketika kelak ada kunci baru. (Dari Q181 SE.)
+static void applyCfgLine(const char *key, const char *val)
+{
+	if (strcmp(key, "server") == 0)
+		snprintf(G_sys_param.mqtt_server, sizeof(G_sys_param.mqtt_server), "%s", val);
+	else if (strcmp(key, "port") == 0)
+		snprintf(G_sys_param.mqtt_port, sizeof(G_sys_param.mqtt_port), "%s", val);
+	else if (strcmp(key, "ssl") == 0)
+		G_sys_param.mqtt_ssl = atoi(val);
+	else if (strcmp(key, "merchant") == 0)
+		snprintf(G_mqttMerchant, sizeof(G_mqttMerchant), "%s", val);
+	else if (strcmp(key, "user") == 0)
+		snprintf(G_mqttUser, sizeof(G_mqttUser), "%s", val);
+	else if (strcmp(key, "pass") == 0)
+		snprintf(G_mqttPass, sizeof(G_mqttPass), "%s", val);
+}
+
+// Membaca MQTT_CFG_FILE dan menimpa nilai bawaan dengan yang disebut di dalamnya. Nilai yang
+// tidak disebut tetap memakai bawaannya. (Dari Q181 SE.)
+static int readMqttCfg(void)
+{
+	int ret;
+	unsigned int len = 512;
+	char buf[513];
+	char *line, *next, *eq, *end;
+
+	memset(buf, 0, sizeof(buf));
+	ret = ReadFile_Api(MQTT_CFG_FILE, (unsigned char *)buf, 0, &len);
+	// Return 2 ("File to the end") berarti berkas lebih pendek dari yang diminta, dan len berisi
+	// jumlah byte yang terbaca -- kasus normal di sini (berkas ~130 byte, diminta 512).
+	if (ret != 0 && ret != 2) {
+		MAINLOG_L1("ReadFile_Api(%s) = %d -- memakai nilai bawaan", MQTT_CFG_FILE, ret);
+		return -1;
+	}
+	if (len > sizeof(buf) - 1)
+		len = sizeof(buf) - 1;
+	buf[len] = 0;
+	buf[sizeof(buf) - 1] = 0;
+	MAINLOG_L1("%s: %u byte terbaca (ret=%d)", MQTT_CFG_FILE, len, ret);
+
+	line = buf;
+	// Lewati BOM UTF-8 di awal berkas (hasil sunting di Notepad) supaya kunci pertama terbaca.
+	if ((unsigned char)line[0] == 0xEF && (unsigned char)line[1] == 0xBB && (unsigned char)line[2] == 0xBF)
+		line += 3;
+	while (line != NULL && *line != 0) {
+		next = strpbrk(line, "\r\n");
+		if (next != NULL) {
+			*next++ = 0;
+			while (*next == '\r' || *next == '\n')
+				next++;
+		}
+
+		// Buang spasi/tab di awal kunci dan di akhir nilai: hasil sunting tangan sering membawanya,
+		// dan spasi di ujung password akan membuat login ditolak tanpa pesan yang jelas.
+		while (*line == ' ' || *line == '\t')
+			line++;
+		eq = strchr(line, '=');
+		if (eq != NULL) {
+			*eq = 0;
+			end = eq + 1 + strlen(eq + 1);
+			while (end > eq + 1 && (end[-1] == ' ' || end[-1] == '\t'))
+				*--end = 0;
+			applyCfgLine(line, eq + 1);
+		}
+
+		line = next;
+	}
+
+	// Password sengaja tidak dicatat ke log.
+	MAINLOG_L1("cfg: server=%s port=%s ssl=%d merchant=%s user=%s",
+			G_sys_param.mqtt_server, G_sys_param.mqtt_port, G_sys_param.mqtt_ssl,
+			G_mqttMerchant, G_mqttUser);
+	return 0;
+}
+
+// Pengaturan MQTT: nilai bawaan firmware, lalu ditimpa MQTT_CFG_FILE. Dipanggil di kedua cabang
+// initParam supaya hasilnya sama apakah sys_param.dat tersimpan atau tidak.
 static void applyMqttParam(void)
 {
-	strcpy(G_sys_param.mqtt_server, "192.168.137.1"); // lokal (laptop dev) -- ganti balik ke "uat-mqtt-dashboard.manjo.co.id" untuk lawan Manjo asli, atau update IP ini kalau laptop pindah/ganti hotspot
-	strcpy(G_sys_param.mqtt_port,   "11883");
-	G_sys_param.mqtt_ssl = 0;
-
-	// Topic mengikuti merchant, bukan serial number -- lihat MQTT_MERCHANT_ID di def.h.
-	// snprintf memotong bila nilainya kepanjangan, supaya tidak meluber ke mqtt_client_id
-	// yang bersebelahan di dalam SYS_PARAM.
-	snprintf(G_sys_param.mqtt_topic, sizeof(G_sys_param.mqtt_topic),
-			"topic_%s", MQTT_MERCHANT_ID);
-	snprintf(G_sys_param.mqtt_client_id, sizeof(G_sys_param.mqtt_client_id),
-			"clientId-%s", G_sys_param.sn);
+	// Bawaan untuk unit yang belum diberi MQTT_CFG_FILE. Tanpa berkas itu perangkat tidak punya
+	// kredensial dan akan ditolak broker -- penolakannya tetap tercatat di log broker sebagai
+	// clientId-<SN>, cara mengetahui SN saat mendaftarkan alat.
+	strcpy(G_sys_param.mqtt_server, "192.168.137.1");
+	strcpy(G_sys_param.mqtt_port,   "18883");
+	G_sys_param.mqtt_ssl = 1;
 
 	// QoS 1 pada langganan, bukan cuma pada penerbitan. QoS efektif adalah yang terkecil di
 	// antara keduanya, jadi langganan QoS 0 akan menurunkan pesan QoS 1 dari Payment API
@@ -59,6 +137,19 @@ static void applyMqttParam(void)
 	// sehingga cleansession = 0 tidak akan ada gunanya.
 	G_sys_param.mqtt_qos       = 1;
 	G_sys_param.mqtt_keepalive = 60;
+
+	memset(G_mqttMerchant, 0, sizeof(G_mqttMerchant));
+	memset(G_mqttUser, 0, sizeof(G_mqttUser));
+	memset(G_mqttPass, 0, sizeof(G_mqttPass));
+	readMqttCfg();
+
+	if (G_mqttMerchant[0] == 0 || G_mqttUser[0] == 0 || G_mqttPass[0] == 0)
+		MAINLOG_L1("!!! %s belum lengkap (merchant/user/pass) -- broker akan menolak perangkat ini", MQTT_CFG_FILE);
+
+	snprintf(G_deviceTopic, sizeof(G_deviceTopic), "topic/%s/%s", G_mqttMerchant, G_sys_param.sn);
+	snprintf(G_requestTopic, sizeof(G_requestTopic), "qris/request/%s/%s", G_mqttMerchant, G_sys_param.sn);
+	snprintf(G_sys_param.mqtt_client_id, sizeof(G_sys_param.mqtt_client_id),
+			"clientId-%s", G_sys_param.sn);
 }
 
 void initParam(void)

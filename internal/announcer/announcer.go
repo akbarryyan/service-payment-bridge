@@ -27,6 +27,7 @@ type Publisher interface {
 // Request is one payment to announce.
 type Request struct {
 	TransactionID string
+	MerchantID    string // Manjo merchant ID; with DeviceID it names the device's topic
 	DeviceID      string
 	Rupiah        int64
 }
@@ -44,14 +45,17 @@ func New(pub Publisher, q *sqlc.Queries, logger *slog.Logger) *Announcer {
 	return &Announcer{pub: pub, q: q, logger: logger, retryDelay: defaultRetryDelay}
 }
 
-// Announce publishes the spoken amount to topic_{device_id}, retrying a failed publish,
-// and records the final outcome in mqtt_messages.
+// Announce publishes the spoken amount to the device's topic/{merchant}/{sn} topic,
+// retrying a failed publish, and records the final outcome in mqtt_messages.
 func (a *Announcer) Announce(ctx context.Context, req Request) error {
+	if req.MerchantID == "" || req.DeviceID == "" {
+		return fmt.Errorf("announcer: merchant and device are required, got %q/%q", req.MerchantID, req.DeviceID)
+	}
 	payload, err := voice.Payload(req.Rupiah)
 	if err != nil {
 		return fmt.Errorf("announcer: %w", err)
 	}
-	topic := qrtopic.BuildDeviceTopic(req.DeviceID)
+	topic := qrtopic.DeviceTopic(req.MerchantID, req.DeviceID)
 
 	pubErr := a.publishWithRetry(ctx, topic, []byte(payload))
 

@@ -33,7 +33,7 @@ void InitSys(void)
 	LogPrintNoRet(G_sys_param.mqtt_server);
 	LogPrintNoRet(G_sys_param.mqtt_port);
 	LogPrintNoRet(G_sys_param.mqtt_client_id);
-	LogPrintNoRet(G_sys_param.mqtt_topic);
+	LogPrintNoRet(G_deviceTopic);
 	LogPrintWithRet(0, "SSL: ", G_sys_param.mqtt_ssl);
 	LogPrintWithRet(0, "QOS: ", G_sys_param.mqtt_qos);
 	LogPrintWithRet(0, "KEEP-ALIVE: ", G_sys_param.mqtt_keepalive);

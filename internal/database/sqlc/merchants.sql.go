@@ -30,3 +30,38 @@ func (q *Queries) GetMerchantByID(ctx context.Context, merchantID string) (Merch
 	)
 	return i, err
 }
+
+const listMerchantsByManjoMerchantID = `-- name: ListMerchantsByManjoMerchantID :many
+SELECT id, merchant_id, manjo_client_id, manjo_private_key_ref, manjo_client_secret_ref, manjo_merchant_id, manjo_channel_id, status, created_at, updated_at FROM merchants WHERE manjo_merchant_id = $1
+`
+
+func (q *Queries) ListMerchantsByManjoMerchantID(ctx context.Context, manjoMerchantID string) ([]Merchant, error) {
+	rows, err := q.db.Query(ctx, listMerchantsByManjoMerchantID, manjoMerchantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Merchant
+	for rows.Next() {
+		var i Merchant
+		if err := rows.Scan(
+			&i.ID,
+			&i.MerchantID,
+			&i.ManjoClientID,
+			&i.ManjoPrivateKeyRef,
+			&i.ManjoClientSecretRef,
+			&i.ManjoMerchantID,
+			&i.ManjoChannelID,
+			&i.Status,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

@@ -26,13 +26,14 @@ import (
 	"service-payment-bridge/internal/manjoclient"
 	"service-payment-bridge/internal/mqttclient"
 	"service-payment-bridge/internal/paymentpoller"
+	"service-payment-bridge/internal/qrtopic"
 	"service-payment-bridge/internal/secrets"
+	"service-payment-bridge/internal/testbroker"
 	"service-payment-bridge/internal/transaction"
 )
 
 const (
 	testDatabaseURL = "postgres://payment_bridge:payment_bridge@localhost:15432/payment_bridge?sslmode=disable"
-	testBrokerURL   = "tcp://localhost:11883"
 	testMerchantID  = "POLL-TEST-MERCHANT"
 	testDeviceID    = "POLL-TEST-DEVICE"
 	rp50000Payload  = "/ext/awal-qris.mp3+/ext/lima.mp3+/ext/puluh.mp3+/ext/ribu.mp3+/ext/akhir-berhasil.mp3"
@@ -100,7 +101,7 @@ func setup(t *testing.T) *fixture {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO devices (device_id, merchant_id, mqtt_topic) VALUES ($1, $2, $3)
-		ON CONFLICT (device_id) DO NOTHING`, testDeviceID, testMerchantID, "topic_"+testDeviceID); err != nil {
+		ON CONFLICT (device_id) DO NOTHING`, testDeviceID, testMerchantID, qrtopic.DeviceTopic(testMerchantID, testDeviceID)); err != nil {
 		t.Fatalf("seed device: %v", err)
 	}
 
@@ -126,18 +127,18 @@ func setup(t *testing.T) *fixture {
 	t.Cleanup(manjo.Close)
 	f.manjoURL = manjo.URL
 
-	f.publisher, err = mqttclient.Connect(testBrokerURL, "", "")
+	f.publisher, err = mqttclient.Connect(testbroker.URL(), testbroker.Username(), testbroker.Password())
 	if err != nil {
 		t.Fatalf("connect mosquitto (docker compose up -d?): %v", err)
 	}
 	t.Cleanup(f.publisher.Disconnect)
 
-	subscriber, err := mqttclient.Connect(testBrokerURL, "", "")
+	subscriber, err := mqttclient.Connect(testbroker.URL(), testbroker.Username(), testbroker.Password())
 	if err != nil {
 		t.Fatalf("connect mosquitto: %v", err)
 	}
 	t.Cleanup(subscriber.Disconnect)
-	if err := subscriber.Subscribe("topic_"+testDeviceID, func(_ mqtt.Client, m mqtt.Message) {
+	if err := subscriber.Subscribe(qrtopic.DeviceTopic(testMerchantID, testDeviceID), func(_ mqtt.Client, m mqtt.Message) {
 		f.messages <- string(m.Payload())
 	}); err != nil {
 		t.Fatalf("subscribe: %v", err)
@@ -146,7 +147,7 @@ func setup(t *testing.T) *fixture {
 	// Registered last so it runs first, while pool and clients are still open.
 	t.Cleanup(func() {
 		ctx := context.Background()
-		pool.Exec(ctx, `DELETE FROM mqtt_messages WHERE topic = $1`, "topic_"+testDeviceID)
+		pool.Exec(ctx, `DELETE FROM mqtt_messages WHERE topic = $1`, qrtopic.DeviceTopic(testMerchantID, testDeviceID))
 		pool.Exec(ctx, `DELETE FROM manjo_api_logs WHERE transaction_id IN (SELECT transaction_id FROM transactions WHERE merchant_id = $1)`, testMerchantID)
 		pool.Exec(ctx, `DELETE FROM manjo_api_logs WHERE operation = 'ACCESS_TOKEN' AND transaction_id IS NULL AND created_at >= $1 AND coalesce(response_body->>'responseCode', '') = ''`, start)
 		pool.Exec(ctx, `DELETE FROM transactions WHERE merchant_id = $1`, testMerchantID)
@@ -213,7 +214,7 @@ func TestRunOnce_PaidTransactionIsAnnounced(t *testing.T) {
 			t.Errorf("announcement = %q, want %q", got, rp50000Payload)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("no announcement received on topic_" + testDeviceID)
+		t.Fatal("no announcement received on " + qrtopic.DeviceTopic(testMerchantID, testDeviceID))
 	}
 	if s := f.status(t, txID); s != sqlc.TransactionStatusPAID {
 		t.Errorf("status = %s, want PAID", s)
@@ -282,7 +283,7 @@ func TestRunOnce_NullNextQueryAtIsClaimedAndAnnounced(t *testing.T) {
 			t.Errorf("announcement = %q, want %q", got, rp50000Payload)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("no announcement received on topic_" + testDeviceID)
+		t.Fatal("no announcement received on " + qrtopic.DeviceTopic(testMerchantID, testDeviceID))
 	}
 	if s := f.status(t, txID); s != sqlc.TransactionStatusPAID {
 		t.Errorf("status = %s, want PAID", s)

@@ -40,6 +40,9 @@ type PaymentCheckResult struct {
 	QueryErr error
 	// ManjoAmount is amount.value of a successful query in Rupiah, 0 when unknown.
 	ManjoAmount int64
+	// ManjoMerchantID is the device's Manjo merchant ID, part of its MQTT topic. Empty when
+	// the device could not be resolved.
+	ManjoMerchantID string
 }
 
 // CheckPayment asks Manjo for tx's payment status and moves tx out of QR_GENERATED when
@@ -51,6 +54,7 @@ func (s *Service) CheckPayment(ctx context.Context, tx sqlc.Transaction) (*Payme
 	outcome := s.queryPayment(ctx, tx)
 	result.QueryErr = outcome.err
 	result.ManjoAmount = outcome.amount
+	result.ManjoMerchantID = outcome.manjoMerchantID
 
 	if outcome.status == "" && s.now().After(expiryDeadline(tx)) {
 		outcome = queryOutcome{status: sqlc.TransactionStatusEXPIRED}
@@ -114,6 +118,7 @@ func (s *Service) queryPayment(ctx context.Context, tx sqlc.Transaction) queryOu
 	}
 
 	outcome := mapQueryResult(resp, err, s.now())
+	outcome.manjoMerchantID = device.ManjoMerchantID
 	if !outcome.pending() {
 		s.logQueryCall(ctx, tx.TransactionID, params, resp, err, s.now().Sub(start))
 	}
@@ -127,6 +132,8 @@ type queryOutcome struct {
 	paidAt time.Time              // zero leaves paid_at unchanged
 	amount int64                  // amount.value in Rupiah, 0 when unknown
 	err    error                  // failed or unusable answer; retry
+
+	manjoMerchantID string // the resolved device's Manjo merchant ID
 }
 
 // pending reports Manjo's "not paid yet" — the only outcome neither logged nor acted on.

@@ -78,8 +78,8 @@ func main() {
 	defer mqttClient.Disconnect()
 
 	handler := newGenerateQRHandler(logger, q, deviceResolver, txService, mqttClient)
-	if err := mqttClient.Subscribe(qrtopic.RequestTopic, handler); err != nil {
-		logger.Error("failed to subscribe to "+qrtopic.RequestTopic, "error", err)
+	if err := mqttClient.Subscribe(qrtopic.RequestTopicFilter, handler); err != nil {
+		logger.Error("failed to subscribe to "+qrtopic.RequestTopicFilter, "error", err)
 		os.Exit(1)
 	}
 
@@ -130,6 +130,13 @@ func newGenerateQRHandler(logger *slog.Logger, q *sqlc.Queries, deviceResolver *
 		topicStr := msg.Topic()
 		payload := msg.Payload()
 
+		topicMerchant, topicSN, err := qrtopic.ParseRequestTopic(topicStr)
+		if err != nil {
+			logger.Warn("unexpected request topic", "topic", topicStr, "error", err)
+			logMQTTMessage(ctx, q, logger, topicStr, payload, sqlc.MqttDirectionINBOUND, sqlc.MqttMessageStatusFAILED, "", err.Error())
+			return
+		}
+
 		qrMsg, err := validation.ParseGenerateQRMessage(payload)
 		if err != nil {
 			logger.Warn("invalid GENERATE_QR payload", "topic", topicStr, "error", err)
@@ -137,9 +144,17 @@ func newGenerateQRHandler(logger *slog.Logger, q *sqlc.Queries, deviceResolver *
 			return
 		}
 
-		replyTopic := qrtopic.BuildDeviceTopic(qrMsg.DeviceID)
+		replyTopic := qrtopic.DeviceTopic(topicMerchant, topicSN)
 
 		device, err := deviceResolver.ResolveDevice(ctx, qrMsg.DeviceID)
+		if err == nil {
+			// No reply on a mismatch: whoever sent it must not learn anything from us.
+			if idErr := validation.CheckRequestIdentity(topicMerchant, topicSN, qrMsg.DeviceID, device.ManjoMerchantID); idErr != nil {
+				logger.Warn("request identity mismatch", "topic", topicStr, "error", idErr)
+				logMQTTMessage(ctx, q, logger, topicStr, payload, sqlc.MqttDirectionINBOUND, sqlc.MqttMessageStatusFAILED, "", "IDENTITY_MISMATCH")
+				return
+			}
+		}
 		if err != nil || !device.DeviceActive || !device.MerchantActive || !device.TenantActive {
 			errMsg := "UNKNOWN_DEVICE"
 			switch {

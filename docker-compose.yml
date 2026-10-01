@@ -18,9 +18,13 @@ services:
   mosquitto:
     image: eclipse-mosquitto:2
     ports:
-      - "11883:1883"
+      - "127.0.0.1:11883:1883"
+      - "18883:8883"
     volumes:
       - ./docker/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./docker/certs:/mosquitto/certs:ro
+      - mosquitto_data:/mosquitto/data
 
 volumes:
   postgres_data:
+  mosquitto_data:

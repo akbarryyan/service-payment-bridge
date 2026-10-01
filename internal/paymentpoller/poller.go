@@ -128,7 +128,7 @@ func (p *Poller) process(ctx context.Context, tx sqlc.Transaction) {
 			p.logger.Warn("stale payment not announced", "transaction_id", done.TransactionID, "device_id", done.DeviceID, "paid_at", paidAt(done))
 			return
 		}
-		p.announcePaid(ctx, done, res.ManjoAmount)
+		p.announcePaid(ctx, done, res.ManjoAmount, res.ManjoMerchantID)
 	case sqlc.TransactionStatusEXPIRED:
 		via := "manjo"
 		if res.ExpiredByDeadline {
@@ -151,13 +151,13 @@ func paidAt(tx sqlc.Transaction) time.Time {
 	return tx.CreatedAt.Time
 }
 
-func (p *Poller) announcePaid(ctx context.Context, tx sqlc.Transaction, manjoAmount int64) {
+func (p *Poller) announcePaid(ctx context.Context, tx sqlc.Transaction, manjoAmount int64, merchantID string) {
 	p.logger.Info("payment detected", "transaction_id", tx.TransactionID, "device_id", tx.DeviceID, "amount", tx.Amount)
 	if manjoAmount != 0 && manjoAmount != tx.Amount {
 		p.logger.Warn("amount mismatch", "transaction_id", tx.TransactionID, "amount", tx.Amount, "manjo_amount", manjoAmount)
 	}
 
-	err := p.announcer.Announce(ctx, announcer.Request{TransactionID: tx.TransactionID, DeviceID: tx.DeviceID, Rupiah: tx.Amount})
+	err := p.announcer.Announce(ctx, announcer.Request{TransactionID: tx.TransactionID, MerchantID: merchantID, DeviceID: tx.DeviceID, Rupiah: tx.Amount})
 	if err != nil {
 		p.logger.Error("announcement failed", "transaction_id", tx.TransactionID, "device_id", tx.DeviceID, "error", err)
 	}

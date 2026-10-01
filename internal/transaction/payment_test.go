@@ -176,6 +176,9 @@ func TestCheckPayment_PaidTransitionsExactlyOnce(t *testing.T) {
 	if res.ManjoAmount != 50000 {
 		t.Errorf("ManjoAmount = %d, want 50000", res.ManjoAmount)
 	}
+	if res.ManjoMerchantID != "TXSVC-TEST-MERCHANT" {
+		t.Errorf("ManjoMerchantID = %q, want TXSVC-TEST-MERCHANT (the device's Manjo merchant ID)", res.ManjoMerchantID)
+	}
 	if n := queryLogCount(t, pool, tx.TransactionID); n != 1 {
 		t.Errorf("QUERY_PAYMENT log rows = %d, want 1", n)
 	}

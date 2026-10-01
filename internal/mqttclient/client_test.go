@@ -5,10 +5,12 @@ import (
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+
+	"service-payment-bridge/internal/testbroker"
 )
 
 func TestConnect_Success(t *testing.T) {
-	c, err := Connect("tcp://localhost:11883", "", "")
+	c, err := Connect(testbroker.URL(), testbroker.Username(), testbroker.Password())
 	if err != nil {
 		t.Fatalf("Connect() error = %v (pastikan `docker compose up -d mosquitto` sedang jalan)", err)
 	}
@@ -27,7 +29,7 @@ func TestConnect_UnreachableBroker(t *testing.T) {
 }
 
 func TestPublishAndSubscribe_RoundTrip(t *testing.T) {
-	c, err := Connect("tcp://localhost:11883", "", "")
+	c, err := Connect(testbroker.URL(), testbroker.Username(), testbroker.Password())
 	if err != nil {
 		t.Fatalf("Connect() error = %v (pastikan `docker compose up -d mosquitto` sedang jalan)", err)
 	}
@@ -53,5 +55,11 @@ func TestPublishAndSubscribe_RoundTrip(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for published message")
+	}
+}
+
+func TestConnect_AnonymousRejected(t *testing.T) {
+	if _, err := Connect(testbroker.URL(), "", ""); err == nil {
+		t.Fatal("anonymous Connect() succeeded, want the broker to refuse it (allow_anonymous false)")
 	}
 }

@@ -102,11 +102,11 @@ func outboundRow(t *testing.T, pool *pgxpool.Pool, txID string) (status, payload
 func TestAnnounce_PublishesAudioForAmount(t *testing.T) {
 	a, pub, pool, txID := setup(t, 0)
 
-	if err := a.Announce(context.Background(), Request{TransactionID: txID, DeviceID: testDeviceID, Rupiah: 50000}); err != nil {
+	if err := a.Announce(context.Background(), Request{TransactionID: txID, MerchantID: testMerchantID, DeviceID: testDeviceID, Rupiah: 50000}); err != nil {
 		t.Fatalf("Announce() error = %v", err)
 	}
-	if len(pub.topics) != 1 || pub.topics[0] != "topic_"+testDeviceID || pub.payloads[0] != rp50000Payload {
-		t.Fatalf("published %v %v, want one %q to topic_%s", pub.topics, pub.payloads, rp50000Payload, testDeviceID)
+	if len(pub.topics) != 1 || pub.topics[0] != "topic/"+testMerchantID+"/"+testDeviceID || pub.payloads[0] != rp50000Payload {
+		t.Fatalf("published %v %v, want one %q to topic/%s/%s", pub.topics, pub.payloads, rp50000Payload, testMerchantID, testDeviceID)
 	}
 	if status, payload, _ := outboundRow(t, pool, txID); status != "PROCESSED" || payload != rp50000Payload {
 		t.Errorf("mqtt_messages = %s %q, want PROCESSED with the payload", status, payload)
@@ -116,7 +116,7 @@ func TestAnnounce_PublishesAudioForAmount(t *testing.T) {
 func TestAnnounce_RetriesTransientFailures(t *testing.T) {
 	a, pub, pool, txID := setup(t, 2)
 
-	if err := a.Announce(context.Background(), Request{TransactionID: txID, DeviceID: testDeviceID, Rupiah: 50000}); err != nil {
+	if err := a.Announce(context.Background(), Request{TransactionID: txID, MerchantID: testMerchantID, DeviceID: testDeviceID, Rupiah: 50000}); err != nil {
 		t.Fatalf("Announce() error = %v", err)
 	}
 	if len(pub.topics) != 3 {
@@ -130,7 +130,7 @@ func TestAnnounce_RetriesTransientFailures(t *testing.T) {
 func TestAnnounce_GivesUpAfterThreeAttempts(t *testing.T) {
 	a, pub, pool, txID := setup(t, 5)
 
-	if err := a.Announce(context.Background(), Request{TransactionID: txID, DeviceID: testDeviceID, Rupiah: 50000}); err == nil {
+	if err := a.Announce(context.Background(), Request{TransactionID: txID, MerchantID: testMerchantID, DeviceID: testDeviceID, Rupiah: 50000}); err == nil {
 		t.Fatal("Announce() error = nil, want error after exhausting retries")
 	}
 	if len(pub.topics) != 3 {
@@ -144,8 +144,19 @@ func TestAnnounce_GivesUpAfterThreeAttempts(t *testing.T) {
 func TestAnnounce_RejectsInvalidAmount(t *testing.T) {
 	a, pub, _, txID := setup(t, 0)
 
-	if err := a.Announce(context.Background(), Request{TransactionID: txID, DeviceID: testDeviceID, Rupiah: 0}); err == nil {
+	if err := a.Announce(context.Background(), Request{TransactionID: txID, MerchantID: testMerchantID, DeviceID: testDeviceID, Rupiah: 0}); err == nil {
 		t.Fatal("Announce() error = nil, want error for amount 0")
+	}
+	if len(pub.topics) != 0 {
+		t.Errorf("published %d times, want 0", len(pub.topics))
+	}
+}
+
+func TestAnnounce_RejectsMissingIdentity(t *testing.T) {
+	a, pub, _, txID := setup(t, 0)
+
+	if err := a.Announce(context.Background(), Request{TransactionID: txID, DeviceID: testDeviceID, Rupiah: 50000}); err == nil {
+		t.Fatal("Announce() without MerchantID error = nil, want error")
 	}
 	if len(pub.topics) != 0 {
 		t.Errorf("published %d times, want 0", len(pub.topics))

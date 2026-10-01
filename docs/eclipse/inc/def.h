@@ -3,12 +3,30 @@
 
 #define __MACHINE_Q161PRO__		//for Q161Pro
 
-// Merchant id milik pemilik soundbox ini, ditetapkan gateway pembayaran. Perangkat melanggan
-// topic_<merchant id>, jadi nilainya harus sama persis dengan yang dikirim backend. Satu biner
-// berlaku untuk satu merchant: ganti baris ini lalu build ulang sebelum mem-flash unit lain.
+// Konfigurasi per perangkat, dibaca saat boot. Dimuat lewat Downtool seperti berkas audio
+// (MergeFile dengan ext.txt, lalu Download). Format sama dengan Q181 SE -- satu "kunci=nilai"
+// per baris, kunci tak dikenal diabaikan -- dan dihasilkan oleh `go run ./cmd/provision add`
+// di service payment-bridge:
 //
-// Maksimal 25 karakter -- mqtt_topic menampung 31, dan "topic_" memakan 6.
-#define MQTT_MERCHANT_ID	"MT58530503"
+//   server=192.168.137.1
+//   port=18883
+//   ssl=1
+//   merchant=MT58530503
+//   user=MT58530503-00078020709
+//   pass=<rahasia>
+#define MQTT_CFG_FILE		"/ext/mqttcfg.dat"
+
+// Identitas dan kredensial dari MQTT_CFG_FILE. Sengaja tidak disimpan di SYS_PARAM: dibaca
+// ulang tiap boot, password tidak ikut tertulis ke sys_param.dat, dan ukuran SYS_PARAM tetap.
+extern char G_mqttMerchant[32];
+extern char G_mqttUser[64];
+extern char G_mqttPass[64];
+
+// Topic milik perangkat ini, disusun dari merchant dan SN: menerima balasan QR dan pengumuman
+// di G_deviceTopic, menerbitkan permintaan QR ke G_requestTopic. 96 byte cukup untuk
+// "qris/request/" + merchant (25) + "/" + SN (31).
+extern char G_deviceTopic[96];
+extern char G_requestTopic[96];
 
 #define BOOT_TIP_FILE		"/ext/welcome.mp3"
 
@@ -33,7 +51,6 @@ extern int G_InputFlag;
 //
 // Payload QRIS sungguhan panjangnya 250-350 karakter, jauh di atas 256 byte yang dipakai
 // QRCodeDisp bawaan demo -- karena itu buffernya 512.
-#define QRIS_REQUEST_TOPIC	"qris/request"
 #define QRIS_REPLY_PREFIX	"QR:"
 #define QRIS_MAX_LEN		512
 
@@ -277,6 +294,10 @@ typedef struct {
 	char wifiPwd[16];
 	char reserved[176];
 } SYS_PARAM;
+
+// sys_param.dat hanya dipakai bila ukurannya sama persis dengan struct ini (initParam); bila
+// berubah, parameter di-reset dan kredensial WiFi di perangkat hilang.
+_Static_assert(sizeof(SYS_PARAM) == 508, "SYS_PARAM berubah ukuran: sys_param.dat (dan WiFi) akan terbuang");
 
 extern SYS_PARAM G_sys_param;
 

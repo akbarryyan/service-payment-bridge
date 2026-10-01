@@ -22,6 +22,7 @@ import (
 	"service-payment-bridge/internal/qrtopic"
 	"service-payment-bridge/internal/resolver"
 	"service-payment-bridge/internal/secrets"
+	"service-payment-bridge/internal/testbroker"
 	"service-payment-bridge/internal/transaction"
 	"service-payment-bridge/internal/validation"
 )
@@ -61,7 +62,8 @@ func TestGenerateQRFlow_EndToEnd(t *testing.T) {
 
 	merchantID := "E2E-TEST-MERCHANT"
 	deviceID := "E2E-TEST-DEVICE"
-	replyTopic := qrtopic.BuildDeviceTopic(deviceID)
+	replyTopic := qrtopic.DeviceTopic(merchantID, deviceID)
+	requestTopic := qrtopic.DeviceRequestTopic(merchantID, deviceID)
 
 	t.Setenv("E2E_PRIVATE_KEY_REF", mustGenerateTestKeyBase64(t))
 	t.Setenv("E2E_SECRET_REF", "e2e-test-secret")
@@ -82,8 +84,8 @@ func TestGenerateQRFlow_EndToEnd(t *testing.T) {
 	}
 	testStart := time.Now()
 	t.Cleanup(func() {
-		// Only this test's rows: qris/request is shared with real devices.
-		pool.Exec(context.Background(), `DELETE FROM mqtt_messages WHERE topic = $1 OR (topic = $2 AND payload LIKE $3)`, replyTopic, qrtopic.RequestTopic, deviceID+"|%")
+		// Deletes only this test's rows: the reply and request topics are per-device.
+		pool.Exec(context.Background(), `DELETE FROM mqtt_messages WHERE topic IN ($1, $2)`, replyTopic, requestTopic)
 		pool.Exec(context.Background(), `DELETE FROM manjo_api_logs WHERE operation = 'ACCESS_TOKEN' AND transaction_id IS NULL AND created_at >= $1 AND coalesce(response_body->>'responseCode', '') = ''`, testStart)
 		pool.Exec(context.Background(), `DELETE FROM manjo_api_logs WHERE transaction_id IN (SELECT transaction_id FROM transactions WHERE merchant_id = $1)`, merchantID)
 		pool.Exec(context.Background(), `DELETE FROM transactions WHERE merchant_id = $1`, merchantID)
@@ -95,7 +97,7 @@ func TestGenerateQRFlow_EndToEnd(t *testing.T) {
 	registry := manjoclient.NewRegistry()
 	txService := transaction.NewServiceWithBaseURL(q, registry, secrets.EnvProvider{}, manjoServer.URL)
 
-	mqttClient, err := mqttclient.Connect("tcp://localhost:11883", "", "")
+	mqttClient, err := mqttclient.Connect(testbroker.URL(), testbroker.Username(), testbroker.Password())
 	if err != nil {
 		t.Fatalf("failed to connect to mosquitto (pastikan docker compose up -d jalan): %v", err)
 	}
@@ -109,8 +111,12 @@ func TestGenerateQRFlow_EndToEnd(t *testing.T) {
 		t.Fatalf("Subscribe(%q) error = %v", replyTopic, err)
 	}
 
-	err = mqttClient.Subscribe(qrtopic.RequestTopic, func(_ mqtt.Client, msg mqtt.Message) {
+	err = mqttClient.Subscribe(requestTopic, func(_ mqtt.Client, msg mqtt.Message) {
 		// simulate the consumer handler inline (same logic as cmd/server/main.go)
+		topicMerchant, topicSN, err := qrtopic.ParseRequestTopic(msg.Topic())
+		if err != nil {
+			return
+		}
 		qrMsg, err := validation.ParseGenerateQRMessage(msg.Payload())
 		if err != nil {
 			return
@@ -119,19 +125,22 @@ func TestGenerateQRFlow_EndToEnd(t *testing.T) {
 		if err != nil {
 			return
 		}
+		if validation.CheckRequestIdentity(topicMerchant, topicSN, qrMsg.DeviceID, device.ManjoMerchantID) != nil {
+			return
+		}
 		result, err := txService.GenerateQR(ctx, *device, qrMsg.Amount)
 		if err != nil || result.Status != "SUCCESS" {
 			return
 		}
-		mqttClient.Publish(qrtopic.BuildDeviceTopic(device.DeviceID), []byte("QR:"+result.QRISPayload))
+		mqttClient.Publish(qrtopic.DeviceTopic(topicMerchant, topicSN), []byte("QR:"+result.QRISPayload))
 	})
 	if err != nil {
-		t.Fatalf("Subscribe(%q) error = %v", qrtopic.RequestTopic, err)
+		t.Fatalf("Subscribe(%q) error = %v", requestTopic, err)
 	}
 
 	// Firmware payload: "{device_id}|{amount_sen}" — 50000 Rupiah = 5000000 sen.
 	reqPayload := []byte(deviceID + "|5000000")
-	if err := mqttClient.Publish(qrtopic.RequestTopic, reqPayload); err != nil {
+	if err := mqttClient.Publish(requestTopic, reqPayload); err != nil {
 		t.Fatalf("Publish() error = %v", err)
 	}
 
